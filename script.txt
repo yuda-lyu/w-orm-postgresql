@@ -1,0 +1,18 @@
+#node --experimental-modules toolg/addVersion.mjs
+node --experimental-modules toolg/modifyReadme.mjs
+
+node --experimental-modules toolg/cleanFolder.mjs
+./node_modules/.bin/jsdoc -c .jsdoc
+
+node --experimental-modules toolg/gDistRollup.mjs
+
+git add .  -A
+git commit -m 'modify: '
+git push origin master:master
+
+npm run deploy
+
+#npm test
+
+#npm publish
+
