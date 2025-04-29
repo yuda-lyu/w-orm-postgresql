@@ -1,5 +1,5 @@
 import assert from 'assert'
-import wo from '../src/WOrmPostgresql.mjs'
+import WOrm from '../src/WOrmPostgresql.mjs'
 
 
 function isWindows() {
@@ -12,7 +12,6 @@ if (isWindows()) {
         let rt = null
         let vans = {}
         let vget = {}
-
 
         before(async function () {
 
@@ -117,15 +116,15 @@ if (isWindows()) {
                 },
             ]
 
-            //w
-            let w = wo(opt)
+            //wo
+            let wo = WOrm(opt)
 
             //on
-            w.on('change', function(mode, data, res) {
+            wo.on('change', function(mode, data, res) {
                 // console.log('change', mode)
             })
 
-            await w.createTable(opt.cl, 'time', {
+            await wo.createTable(opt.cl, 'time', {
                 time: '2000-01-01T00:00:00Z', //time
                 name: 'abc', //string
                 value: 0.1, //float
@@ -140,7 +139,7 @@ if (isWindows()) {
             //delAll
             rt = null
             vans[1] = { ok: 1 }
-            await w.delAll()
+            await wo.delAll()
                 .then(function(msg) {
                     // console.log('delAll then', msg)
                     //考慮有不同初始狀態, 僅比對ok欄位
@@ -157,7 +156,7 @@ if (isWindows()) {
             //insert
             rt = null
             vans[2] = { n: 13, nInserted: 13, ok: 1 }
-            await w.insert(rs)
+            await wo.insert(rs)
                 .then(function(msg) {
                     // console.log('insert then', msg)
                     rt = msg
@@ -177,7 +176,7 @@ if (isWindows()) {
                 { n: 1, nModified: 1, ok: 1 },
                 { n: 1, nInserted: 1, ok: 1 }
             ]
-            await w.save(rsm, { autoInsert: true })
+            await wo.save(rsm, { autoInsert: true })
                 .then(function(msg) {
                     // console.log('save then', msg)
                     rt = msg
@@ -206,7 +205,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:12:00.000Z'), name: 'peter', value: 99 },
                 { time: new Date('2025-01-01T00:13:00.000Z'), name: 'sandler', value: null }
             ]
-            await w.select()
+            await wo.select()
                 .then(function(msg) {
                     // console.log('select all then', msg)
                     rt = msg
@@ -224,7 +223,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:04:00.000Z'), name: 'rosemary', value: 123.1236 },
                 { time: new Date('2025-01-01T00:07:00.000Z'), name: 'rosemary', value: 124.76 }
             ]
-            await w.select({ name: 'rosemary' })
+            await wo.select({ name: 'rosemary' })
                 .then(function(msg) {
                     // console.log('select all then', msg)
                     rt = msg
@@ -244,7 +243,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:07:00.000Z'), name: 'rosemary', value: 124.76 },
                 { time: new Date('2025-01-01T00:09:00.000Z'), name: 'peter', value: 127 }
             ]
-            await w.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
+            await wo.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
                 .then(function(msg) {
                     // console.log('select all then', msg)
                     rt = msg
@@ -264,7 +263,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:08:00.000Z'), name: 'kettle', value: 524 },
                 { time: new Date('2025-01-01T00:11:00.000Z'), name: 'kettle(modify)', value: 447 }
             ]
-            await w.select({ '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 200 } }] })
+            await wo.select({ '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 200 } }] })
                 .then(function(msg) {
                     // console.log('select all then', msg)
                     rt = msg
@@ -284,7 +283,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:08:00.000Z'), name: 'kettle', value: 524 },
                 { time: new Date('2025-01-01T00:11:00.000Z'), name: 'kettle(modify)', value: 447 }
             ]
-            await w.select({ '$or': [{ '$and': [{ value: { '$ne': 123 } }, { value: { '$in': [123, 321, 123.456, 456] } }, { value: { '$nin': [456, 654] } }] }, { '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 400 } }] }] })
+            await wo.select({ '$or': [{ '$and': [{ value: { '$ne': 123 } }, { value: { '$in': [123, 321, 123.456, 456] } }, { value: { '$nin': [456, 654] } }] }, { '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 400 } }] }] })
                 .then(function(msg) {
                     // console.log('select all then', msg)
                     rt = msg
@@ -298,7 +297,7 @@ if (isWindows()) {
             // //select by regex
             // rt = null
             // vans[9] = []
-            // let sr = await w.select({ name: { $regex: 'PeT', $options: '$i' } })
+            // let sr = await wo.select({ name: { $regex: 'PeT', $options: '$i' } })
             //  .then(function(msg) {
             //      // console.log('select all then', msg)
             //      rt = msg
@@ -315,7 +314,7 @@ if (isWindows()) {
             let d = {
                 time: '2024-01-01T00:00:00Z',
             }
-            await w.del(d)
+            await wo.del(d)
                 .then(function(msg) {
                     // console.log('del then', msg)
                     rt = msg
@@ -340,11 +339,11 @@ if (isWindows()) {
                 { n: 1, nDeleted: 1, ok: 1 },
                 { n: 1, nDeleted: 1, ok: 1 }
             ]
-            let ss = await w.select()
+            let ss = await wo.select()
             let ds = ss.filter(function(v) {
                 return v.name.indexOf('peter') >= 0 || v.name.indexOf('kettle') >= 0 || v.name.indexOf('sandler') >= 0
             })
-            await w.del(ds)
+            await wo.del(ds)
                 .then(function(msg) {
                     // console.log('del then', msg)
                     rt = msg
@@ -363,7 +362,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:07:00.000Z'), name: 'rosemary', value: 124.76 },
                 { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 }
             ]
-            await w.select()
+            await wo.select()
                 .then(function(msg) {
                 // console.log('select all then', msg)
                     rt = msg

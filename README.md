@@ -19,7 +19,8 @@ npm i w-orm-postgresql
 #### Example for collection
 > **Link:** [[dev source code](https://github.com/yuda-lyu/w-orm-postgresql/blob/master/g-basic.mjs)]
 ```alias
-import wo from 'w-orm-postgresql'
+import WOrm from './src/WOrmPostgresql.mjs'
+//import WOrm from './dist/w-orm-postgresql.umd.js'
 
 let opt = {
     url: 'postgresql://username:password@127.0.0.1:5432',
@@ -124,11 +125,11 @@ let rsm = [
 
 async function test() {
 
-    //w
-    let w = wo(opt)
-    // console.log('w', w)
+    //wo
+    let wo = WOrm(opt)
+    // console.log('wo', wo)
 
-    await w.createTable(opt.cl, 'time', {
+    await wo.createTable(opt.cl, 'time', {
         time: '2000-01-01T00:00:00Z', //time
         name: 'abc', //string
         value: 0.1, //float
@@ -141,12 +142,12 @@ async function test() {
         })
 
     //on
-    w.on('change', function(mode, data, res) {
+    wo.on('change', function(mode, data, res) {
         console.log('change', mode)
     })
 
     //delAll
-    await w.delAll()
+    await wo.delAll()
         .then(function(msg) {
             console.log('delAll then', msg)
         })
@@ -155,7 +156,7 @@ async function test() {
         })
 
     //insert
-    await w.insert(rs)
+    await wo.insert(rs)
         .then(function(msg) {
             console.log('insert then', msg)
         })
@@ -164,7 +165,7 @@ async function test() {
         })
 
     //save
-    await w.save(rsm, { autoInsert: true })
+    await wo.save(rsm, { autoInsert: true })
         .then(function(msg) {
             console.log('save then', msg)
         })
@@ -173,34 +174,34 @@ async function test() {
         })
 
     //select all
-    let ss = await w.select()
+    let ss = await wo.select()
     console.log('select all', ss)
 
     //select
-    let so = await w.select({ name: 'rosemary' })
+    let so = await wo.select({ name: 'rosemary' })
     console.log('select by name', so)
 
     //select by $and, $gt, $lt
-    let spa = await w.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
+    let spa = await wo.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
     console.log('select by $and, $gt, $lt', spa)
 
     //select by $or, $gte, $lte
-    let spb = await w.select({ '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 200 } }] })
+    let spb = await wo.select({ '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 200 } }] })
     console.log('select by $or, $gte, $lte', spb)
 
     //select by $or, $and, $ne, $in, $nin
-    let spc = await w.select({ '$or': [{ '$and': [{ value: { '$ne': 123 } }, { value: { '$in': [123, 321, 123.456, 456] } }, { value: { '$nin': [456, 654] } }] }, { '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 400 } }] }] })
+    let spc = await wo.select({ '$or': [{ '$and': [{ value: { '$ne': 123 } }, { value: { '$in': [123, 321, 123.456, 456] } }, { value: { '$nin': [456, 654] } }] }, { '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 400 } }] }] })
     console.log('select by $or, $and, $ne, $in, $nin', spc)
 
     // //select by regex
-    // let sr = await w.select({ name: { $regex: 'PeT', $options: '$i' } })
+    // let sr = await wo.select({ name: { $regex: 'PeT', $options: '$i' } })
     // console.log('selectReg', sr)
 
     //del
     let d = {
         time: '2024-01-01T00:00:00Z',
     }
-    await w.del(d)
+    await wo.del(d)
         .then(function(msg) {
             console.log('del then', msg)
         })
@@ -212,7 +213,7 @@ async function test() {
     let ds = ss.filter(function(v) {
         return v.name.indexOf('peter') >= 0 || v.name.indexOf('kettle') >= 0 || v.name.indexOf('sandler') >= 0
     })
-    await w.del(ds)
+    await wo.del(ds)
         .then(function(msg) {
             console.log('del then', msg)
         })
@@ -221,7 +222,7 @@ async function test() {
         })
 
     //select all final
-    let ss2 = await w.select()
+    let ss2 = await wo.select()
     console.log('select all final', ss2)
 
 }

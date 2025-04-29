@@ -37,7 +37,6 @@ function WOrmPostgresql(opt = {}) {
     //url
     let url = get(opt, 'url')
     if (!isestr(url)) {
-        // url = `postgresql://${user}:${password}@${ip}:${port}`
         url = 'postgresql://user:password@127.0.0.1:5432'
     }
 
@@ -146,14 +145,14 @@ function WOrmPostgresql(opt = {}) {
     // console.log('PgClient', PgClient)
 
     /**
-         * 創建資料表
-         *
-         * @memberOf WOrmPostgresql
-         * @param {String} cl 輸入資料表名字串
-         * @param {String} pk 輸入主鍵字串
-         * @param {Array|Object} arr 輸入數據物件陣列或數據物件
-         * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
-         */
+     * 創建資料表
+     *
+     * @memberOf WOrmPostgresql
+     * @param {String} cl 輸入資料表名字串
+     * @param {String} pk 輸入主鍵字串
+     * @param {Array|Object} arr 輸入數據物件陣列或數據物件
+     * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
+     */
     async function createTable(cl, pk, arr) {
         let isErr = false
         let res = null
@@ -228,13 +227,13 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-         * 查詢數據
-         *
-         * @memberOf WOrmPostgresql
-         * @param {Object} [find={}] 輸入查詢條件物件
-         * @param {Object} [order={}] 輸入排序條件物件
-         * @returns {Promise} 回傳Promise，resolve回傳數據，reject回傳錯誤訊息
-         */
+     * 查詢數據
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object} [find={}] 輸入查詢條件物件
+     * @param {Object} [order={}] 輸入排序條件物件
+     * @returns {Promise} 回傳Promise，resolve回傳數據，reject回傳錯誤訊息
+     */
     async function select(find = {}, order = {}) {
         let isErr = false
         let res = null
@@ -307,12 +306,12 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-         * 插入數據
-         *
-         * @memberOf WOrmPostgresql
-         * @param {Object|Array} data 輸入數據物件或陣列
-         * @returns {Promise} 回傳Promise，resolve回傳插入結果，reject回傳錯誤訊息
-         */
+     * 插入數據
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object|Array} data 輸入數據物件或陣列
+     * @returns {Promise} 回傳Promise，resolve回傳插入結果，reject回傳錯誤訊息
+     */
     async function insert(data) {
         let isErr = false
         let res = null
@@ -409,14 +408,14 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-         * 儲存數據
-         *
-         * @memberOf WOrmPostgresql
-         * @param {Object|Array} data 輸入數據物件或陣列
-         * @param {Object} [option={}] 輸入設定物件，預設為{}
-         * @param {boolean} [option.autoInsert=true] 輸入是否於儲存時發現原本無數據，則自動改以插入處理，預設為true
-         * @returns {Promise} 回傳Promise，resolve回傳儲存結果，reject回傳錯誤訊息
-         */
+     * 儲存數據
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object|Array} data 輸入數據物件或陣列
+     * @param {Object} [option={}] 輸入設定物件，預設為{}
+     * @param {boolean} [option.autoInsert=true] 輸入是否於儲存時發現原本無數據，則自動改以插入處理，預設為true
+     * @returns {Promise} 回傳Promise，resolve回傳儲存結果，reject回傳錯誤訊息
+     */
     async function save(data, option = {}) {
         let isErr = false
         let res = null
@@ -650,12 +649,12 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-         * 刪除數據
-         *
-         * @memberOf WOrmPostgresql
-         * @param {Object|Array} data 輸入數據物件或陣列
-         * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
-         */
+     * 刪除數據
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object|Array} data 輸入數據物件或陣列
+     * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
+     */
     async function del(data) {
         let isErr = false
         let res = null
@@ -770,12 +769,12 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-         * 刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表
-         *
-         * @memberOf WOrmPostgresql
-         * @param {Object} [find={}] 輸入刪除條件物件
-         * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
-         */
+     * 刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object} [find={}] 輸入刪除條件物件
+     * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
+     */
     async function delAll(find = {}) {
         let isErr = false
         let res = null
