@@ -316,6 +316,15 @@ function WOrmPostgresql(opt = {}) {
         let isErr = false
         let res = null
 
+        //check
+        if (!iseobj(data) && !isearr(data)) {
+            return {
+                n: 0,
+                nInserted: 0,
+                ok: 1,
+            }
+        }
+
         //cloneDeep
         data = cloneDeep(data)
 
@@ -419,6 +428,11 @@ function WOrmPostgresql(opt = {}) {
     async function save(data, option = {}) {
         let isErr = false
         let res = null
+
+        //check
+        if (!iseobj(data) && !isearr(data)) {
+            return []
+        }
 
         //cloneDeep
         data = cloneDeep(data)
@@ -658,6 +672,11 @@ function WOrmPostgresql(opt = {}) {
     async function del(data) {
         let isErr = false
         let res = null
+
+        //check
+        if (!iseobj(data) && !isearr(data)) {
+            return []
+        }
 
         //cloneDeep
         data = cloneDeep(data)
