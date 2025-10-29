@@ -12,10 +12,12 @@ An operator for postgresql in nodejs.
 To view documentation or get support, visit [docs](https://yuda-lyu.github.io/w-orm-postgresql/WOrm.html).
 
 ## Installation
+
 ### Using npm(ES6 module):
 ```alias
 npm i w-orm-postgresql
 ```
+
 #### Example for collection
 > **Link:** [[dev source code](https://github.com/yuda-lyu/w-orm-postgresql/blob/master/g-basic.mjs)]
 ```alias
