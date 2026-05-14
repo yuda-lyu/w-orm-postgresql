@@ -116,6 +116,13 @@ if (isWindows()) {
                 },
             ]
 
+            let rsa = [
+                {
+                    time: '2025-01-01T00:13:00Z',
+                    name: 'sandler',
+                },
+            ]
+
             //wo
             let wo = WOrm(opt)
 
@@ -174,9 +181,9 @@ if (isWindows()) {
                 { n: 1, nModified: 1, ok: 1 },
                 { n: 1, nModified: 1, ok: 1 },
                 { n: 1, nModified: 1, ok: 1 },
-                { n: 1, nInserted: 1, ok: 1 }
+                { n: 0, nModified: 0, ok: 1 }
             ]
-            await wo.save(rsm, { autoInsert: true })
+            await wo.save(rsm, { autoInsert: false })
                 .then(function(msg) {
                     // console.log('save then', msg)
                     rt = msg
@@ -202,8 +209,7 @@ if (isWindows()) {
                 { time: new Date('2025-01-01T00:09:00.000Z'), name: 'peter', value: 127 },
                 { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 },
                 { time: new Date('2025-01-01T00:11:00.000Z'), name: 'kettle(modify)', value: 447 },
-                { time: new Date('2025-01-01T00:12:00.000Z'), name: 'peter', value: 99 },
-                { time: new Date('2025-01-01T00:13:00.000Z'), name: 'sandler', value: null }
+                { time: new Date('2025-01-01T00:12:00.000Z'), name: 'peter', value: 99 }
             ]
             await wo.select()
                 .then(function(msg) {
@@ -216,9 +222,23 @@ if (isWindows()) {
                 })
             vget[4] = rt
 
+            //select all by cache
+            rt = null
+            vans[5] = vans[4]
+            await wo.select()
+                .then(function(msg) {
+                    // console.log('select all by cache then', msg)
+                    rt = msg
+                })
+                .catch(function(msg) {
+                    // console.log('select all by cache catch', msg)
+                    rt = msg.toString()
+                })
+            vget[5] = rt
+
             //select by name
             rt = null
-            vans[5] = [
+            vans[6] = [
                 { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary', value: 123.456 },
                 { time: new Date('2025-01-01T00:04:00.000Z'), name: 'rosemary', value: 123.1236 },
                 { time: new Date('2025-01-01T00:07:00.000Z'), name: 'rosemary', value: 124.76 }
@@ -232,11 +252,11 @@ if (isWindows()) {
                     // console.log('select all catch', msg)
                     rt = msg.toString()
                 })
-            vget[5] = rt
+            vget[6] = rt
 
             //select by $and, $gt, $lt
             rt = null
-            vans[6] = [
+            vans[7] = [
                 { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary', value: 123.456 },
                 { time: new Date('2025-01-01T00:04:00.000Z'), name: 'rosemary', value: 123.1236 },
                 { time: new Date('2025-01-01T00:06:00.000Z'), name: 'peter', value: 125 },
@@ -252,11 +272,11 @@ if (isWindows()) {
                     // console.log('select all catch', msg)
                     rt = msg.toString()
                 })
-            vget[6] = rt
+            vget[7] = rt
 
             //select by $or, $gte, $lte
             rt = null
-            vans[7] = [
+            vans[8] = [
                 { time: new Date('2025-01-01T00:02:00.000Z'), name: 'kettle', value: 456 },
                 { time: new Date('2025-01-01T00:03:00.000Z'), name: 'peter', value: 200 },
                 { time: new Date('2025-01-01T00:05:00.000Z'), name: 'kettle', value: 488 },
@@ -272,11 +292,11 @@ if (isWindows()) {
                     // console.log('select all catch', msg)
                     rt = msg.toString()
                 })
-            vget[7] = rt
+            vget[8] = rt
 
             //select by $or, $and, $ne, $in, $nin
             rt = null
-            vans[8] = [
+            vans[9] = [
                 { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary', value: 123.456 },
                 { time: new Date('2025-01-01T00:02:00.000Z'), name: 'kettle', value: 456 },
                 { time: new Date('2025-01-01T00:05:00.000Z'), name: 'kettle', value: 488 },
@@ -292,11 +312,11 @@ if (isWindows()) {
                     // console.log('select all catch', msg)
                     rt = msg.toString()
                 })
-            vget[8] = rt
+            vget[9] = rt
 
             // //select by regex
             // rt = null
-            // vans[9] = []
+            // vans[14] = []
             // let sr = await wo.select({ name: { $regex: 'PeT', $options: '$i' } })
             //  .then(function(msg) {
             //      // console.log('select all then', msg)
@@ -306,11 +326,25 @@ if (isWindows()) {
             //      // console.log('select all catch', msg)
             //      rt = msg.toString()
             //  })
-            //  vget[9] = rt
+            //  vget[14] = rt
+
+            //save
+            rt = null
+            vans[10] = [{ n: 1, nInserted: 1, ok: 1 }]
+            await wo.save(rsa, { autoInsert: true })
+                .then(function(msg) {
+                    // console.log('save then', msg)
+                    rt = msg
+                })
+                .catch(function(msg) {
+                    // console.log('save catch', msg)
+                    rt = msg.toString()
+                })
+            vget[10] = rt
 
             //del
             rt = null
-            vans[10] = [{ n: 1, nDeleted: 0, ok: 1 }]
+            vans[11] = [{ n: 1, nDeleted: 0, ok: 1 }]
             let d = {
                 time: '2024-01-01T00:00:00Z',
             }
@@ -323,11 +357,11 @@ if (isWindows()) {
                     // console.log('del catch', msg)
                     rt = msg.toString()
                 })
-            vget[10] = rt
+            vget[11] = rt
 
             //del
             rt = null
-            vans[11] = [
+            vans[12] = [
                 { n: 1, nDeleted: 1, ok: 1 },
                 { n: 1, nDeleted: 1, ok: 1 },
                 { n: 1, nDeleted: 1, ok: 1 },
@@ -352,11 +386,11 @@ if (isWindows()) {
                     // console.log('del catch', msg)
                     rt = msg.toString()
                 })
-            vget[11] = rt
+            vget[12] = rt
 
             //select all final
             rt = null
-            vans[12] = [
+            vans[13] = [
                 { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary', value: 123.456 },
                 { time: new Date('2025-01-01T00:04:00.000Z'), name: 'rosemary', value: 123.1236 },
                 { time: new Date('2025-01-01T00:07:00.000Z'), name: 'rosemary', value: 124.76 },
@@ -371,7 +405,7 @@ if (isWindows()) {
                 // console.log('select all catch', msg)
                     rt = msg.toString()
                 })
-            vget[12] = rt
+            vget[13] = rt
 
         })
 
@@ -383,7 +417,7 @@ if (isWindows()) {
             assert.strict.deepStrictEqual(vget[2], vans[2])
         })
 
-        it(`should get ${JSON.stringify(vans[3])} for save`, async function() {
+        it(`should get ${JSON.stringify(vans[3])} for save(autoInsert=false)`, async function() {
             assert.strict.deepStrictEqual(vget[3], vans[3])
         })
 
@@ -391,27 +425,31 @@ if (isWindows()) {
             assert.strict.deepStrictEqual(vget[4], vans[4])
         })
 
-        it(`should get ${JSON.stringify(vans[5])} for select by name`, async function() {
+        it(`should get ${JSON.stringify(vans[5])} for select all by cache`, async function() {
             assert.strict.deepStrictEqual(vget[5], vans[5])
         })
 
-        it(`should get ${JSON.stringify(vans[6])} for select by $and, $gt, $lt`, async function() {
+        it(`should get ${JSON.stringify(vans[6])} for select by name`, async function() {
             assert.strict.deepStrictEqual(vget[6], vans[6])
         })
 
-        it(`should get ${JSON.stringify(vans[7])} for select by $or, $gte, $lte`, async function() {
+        it(`should get ${JSON.stringify(vans[7])} for select by $and, $gt, $lt`, async function() {
             assert.strict.deepStrictEqual(vget[7], vans[7])
         })
 
-        it(`should get ${JSON.stringify(vans[8])} for select by $or, $and, $ne, $in, $nin`, async function() {
+        it(`should get ${JSON.stringify(vans[8])} for select by $or, $gte, $lte`, async function() {
             assert.strict.deepStrictEqual(vget[8], vans[8])
         })
 
-        // it(`should get ${JSON.stringify(vans[9])} for select by regex`, async function() {
-        //     assert.strict.deepStrictEqual(vget[9], vans[9])
+        it(`should get ${JSON.stringify(vans[9])} for select by $or, $and, $ne, $in, $nin`, async function() {
+            assert.strict.deepStrictEqual(vget[9], vans[9])
+        })
+
+        // it(`should get ${JSON.stringify(vans[14])} for select by regex`, async function() {
+        //     assert.strict.deepStrictEqual(vget[14], vans[14])
         // })
 
-        it(`should get ${JSON.stringify(vans[10])} for del`, async function() {
+        it(`should get ${JSON.stringify(vans[10])} for save(autoInsert=true)`, async function() {
             assert.strict.deepStrictEqual(vget[10], vans[10])
         })
 
@@ -419,8 +457,12 @@ if (isWindows()) {
             assert.strict.deepStrictEqual(vget[11], vans[11])
         })
 
-        it(`should get ${JSON.stringify(vans[12])} for select all final`, async function() {
+        it(`should get ${JSON.stringify(vans[12])} for del`, async function() {
             assert.strict.deepStrictEqual(vget[12], vans[12])
+        })
+
+        it(`should get ${JSON.stringify(vans[13])} for select all final`, async function() {
+            assert.strict.deepStrictEqual(vget[13], vans[13])
         })
 
     })

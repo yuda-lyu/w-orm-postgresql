@@ -34,6 +34,9 @@ import pmSeries from 'wsemi/src/pmSeries.mjs'
  */
 function WOrmPostgresql(opt = {}) {
 
+    //_cache
+    let _cache = null
+
     //url
     let url = get(opt, 'url')
     if (!isestr(url)) {
@@ -144,6 +147,39 @@ function WOrmPostgresql(opt = {}) {
     let PgClient = pg.Client
     // console.log('PgClient', PgClient)
 
+    //clearCache
+    function clearCache() {
+        _cache = null
+    }
+
+    //getCacheKey
+    function getCacheKey(find = {}, order = {}) {
+        return JSON.stringify({
+            find,
+            order,
+        })
+    }
+
+    //getCache
+    function getCache(find = {}, order = {}) {
+        if (iseobj(_cache)) {
+            let key = getCacheKey(find, order)
+            if (Object.prototype.hasOwnProperty.call(_cache, key)) {
+                return cloneDeep(_cache[key]) //與外部使用數據脫勾
+            }
+        }
+        return null
+    }
+
+    //setCache
+    function setCache(find = {}, order = {}, data = []) {
+        if (!iseobj(_cache)) {
+            _cache = {}
+        }
+        let key = getCacheKey(find, order)
+        _cache[key] = cloneDeep(data) //與外部使用數據脫勾
+    }
+
     /**
      * 創建資料表
      *
@@ -218,6 +254,9 @@ function WOrmPostgresql(opt = {}) {
         }
         // console.log('res', res)
 
+        //update
+        clearCache()
+
         //check
         if (isErr) {
             return Promise.reject(res)
@@ -237,6 +276,12 @@ function WOrmPostgresql(opt = {}) {
     async function select(find = {}, order = {}) {
         let isErr = false
         let res = null
+
+        //cache
+        let cache = getCache(find, order)
+        if (isarr(cache)) {
+            return cache
+        }
 
         //client
         let client = new PgClient({ connectionString })
@@ -284,6 +329,11 @@ function WOrmPostgresql(opt = {}) {
             if (!isarr(res)) {
                 isErr = true
                 res = `can not select by find[${JSON.stringify(find)}]`
+            }
+
+            //cache
+            if (!isErr) {
+                setCache(find, order, res)
             }
 
         }
@@ -389,9 +439,6 @@ function WOrmPostgresql(opt = {}) {
                         ok: 1,
                     }
 
-                    //emit
-                    ee.emit('change', 'insert', data, res)
-
                 })
                 .catch((err) => {
                     isErr = true
@@ -406,6 +453,19 @@ function WOrmPostgresql(opt = {}) {
         finally {
             await client.end()
             client = null
+        }
+
+        //update
+        clearCache()
+
+        //emit
+        if (!isErr) {
+            try {
+                ee.emit('change', 'insert', data, res)
+            }
+            catch (err) {
+                console.log(err)
+            }
         }
 
         //check
@@ -641,9 +701,6 @@ function WOrmPostgresql(opt = {}) {
                 return rest
             })
 
-            //emit
-            ee.emit('change', 'save', data, res)
-
         }
         catch (err) {
             isErr = true
@@ -652,6 +709,19 @@ function WOrmPostgresql(opt = {}) {
         finally {
             await client.end()
             client = null
+        }
+
+        //update
+        clearCache()
+
+        //emit
+        if (!isErr) {
+            try {
+                ee.emit('change', 'save', data, res)
+            }
+            catch (err) {
+                console.log(err)
+            }
         }
 
         //check
@@ -766,9 +836,6 @@ function WOrmPostgresql(opt = {}) {
                 return rest
             })
 
-            //emit
-            ee.emit('change', 'del', data, res)
-
         }
         catch (err) {
             isErr = true
@@ -777,6 +844,19 @@ function WOrmPostgresql(opt = {}) {
         finally {
             await client.end()
             client = null
+        }
+
+        //update
+        clearCache()
+
+        //emit
+        if (!isErr) {
+            try {
+                ee.emit('change', 'del', data, res)
+            }
+            catch (err) {
+                console.log(err)
+            }
         }
 
         //check
@@ -856,9 +936,6 @@ function WOrmPostgresql(opt = {}) {
                         ok: 1,
                     }
 
-                    //emit
-                    ee.emit('change', 'delAll', null, res)
-
                 })
                 .catch((err) => {
                     isErr = true
@@ -873,6 +950,19 @@ function WOrmPostgresql(opt = {}) {
         finally {
             await client.end()
             client = null
+        }
+
+        //update
+        clearCache()
+
+        //emit
+        if (!isErr) {
+            try {
+                ee.emit('change', 'delAll', null, res)
+            }
+            catch (err) {
+                console.log(err)
+            }
         }
 
         //check

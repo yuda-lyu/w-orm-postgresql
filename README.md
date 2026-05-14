@@ -125,6 +125,13 @@ let rsm = [
     },
 ]
 
+let rsa = [
+    {
+        time: '2025-01-01T00:13:00Z',
+        name: 'sandler',
+    },
+]
+
 async function test() {
 
     //wo
@@ -167,7 +174,7 @@ async function test() {
         })
 
     //save
-    await wo.save(rsm, { autoInsert: true })
+    await wo.save(rsm, { autoInsert: false })
         .then(function(msg) {
             console.log('save then', msg)
         })
@@ -199,6 +206,15 @@ async function test() {
     // let sr = await wo.select({ name: { $regex: 'PeT', $options: '$i' } })
     // console.log('selectReg', sr)
 
+    //save
+    await wo.save(rsa, { autoInsert: true })
+        .then(function(msg) {
+            console.log('save then', msg)
+        })
+        .catch(function(msg) {
+            console.log('save catch', msg)
+        })
+
     //del
     let d = {
         time: '2024-01-01T00:00:00Z',
@@ -212,7 +228,8 @@ async function test() {
         })
 
     //del
-    let ds = ss.filter(function(v) {
+    let ssDel = await wo.select()
+    let ds = ssDel.filter(function(v) {
         return v.name.indexOf('peter') >= 0 || v.name.indexOf('kettle') >= 0 || v.name.indexOf('sandler') >= 0
     })
     await wo.del(ds)
@@ -239,7 +256,7 @@ test()
 //   { n: 1, nModified: 1, ok: 1 },
 //   { n: 1, nModified: 1, ok: 1 },
 //   { n: 1, nModified: 1, ok: 1 },
-//   { n: 1, nInserted: 1, ok: 1 }
+//   { n: 0, nModified: 0, ok: 1 }
 // ]
 // select all [
 //   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
@@ -262,8 +279,7 @@ test()
 //     name: 'kettle(modify)',
 //     value: 447
 //   },
-//   { time: 2025-01-01T00:12:00.000Z, name: 'peter', value: 99 },
-//   { time: 2025-01-01T00:13:00.000Z, name: 'sandler', value: null }
+//   { time: 2025-01-01T00:12:00.000Z, name: 'peter', value: 99 }
 // ]
 // select by name [
 //   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
@@ -299,6 +315,8 @@ test()
 //     value: 447
 //   }
 // ]
+// change save
+// save then [ { n: 1, nInserted: 1, ok: 1 } ]
 // change del
 // del then [ { n: 1, nDeleted: 0, ok: 1 } ]
 // change del
