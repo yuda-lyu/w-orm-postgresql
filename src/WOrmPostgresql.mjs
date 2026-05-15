@@ -19,6 +19,7 @@ import isnum from 'wsemi/src/isnum.mjs'
 import isint from 'wsemi/src/isint.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isDate from 'wsemi/src/isDate.mjs'
+import haskey from 'wsemi/src/haskey.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
 
 
@@ -30,6 +31,7 @@ import pmSeries from 'wsemi/src/pmSeries.mjs'
  * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，預設'postgresql://127.0.0.1:5432'
  * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，預設'worm'
  * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，預設'test'
+ * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
  */
 function WOrmPostgresql(opt = {}) {
@@ -53,6 +55,12 @@ function WOrmPostgresql(opt = {}) {
     let cl = get(opt, 'cl')
     if (!isestr(cl)) {
         cl = 'test'
+    }
+
+    //useCache
+    let useCache = get(opt, 'useCache')
+    if (!isbol(useCache)) {
+        useCache = false
     }
 
     //getValueType
@@ -164,7 +172,7 @@ function WOrmPostgresql(opt = {}) {
     function getCache(find = {}, order = {}) {
         if (iseobj(_cache)) {
             let key = getCacheKey(find, order)
-            if (Object.prototype.hasOwnProperty.call(_cache, key)) {
+            if (haskey(_cache, key)) {
                 return cloneDeep(_cache[key]) //與外部使用數據脫勾
             }
         }
@@ -255,7 +263,9 @@ function WOrmPostgresql(opt = {}) {
         // console.log('res', res)
 
         //update
-        clearCache()
+        if (useCache) {
+            clearCache()
+        }
 
         //check
         if (isErr) {
@@ -278,9 +288,11 @@ function WOrmPostgresql(opt = {}) {
         let res = null
 
         //cache
-        let cache = getCache(find, order)
-        if (isarr(cache)) {
-            return cache
+        if (useCache) {
+            let cache = getCache(find, order)
+            if (isarr(cache)) {
+                return cache
+            }
         }
 
         //client
@@ -332,7 +344,7 @@ function WOrmPostgresql(opt = {}) {
             }
 
             //cache
-            if (!isErr) {
+            if (useCache && !isErr) {
                 setCache(find, order, res)
             }
 
@@ -456,7 +468,9 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //update
-        clearCache()
+        if (useCache) {
+            clearCache()
+        }
 
         //emit
         if (!isErr) {
@@ -712,7 +726,9 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //update
-        clearCache()
+        if (useCache) {
+            clearCache()
+        }
 
         //emit
         if (!isErr) {
@@ -847,7 +863,9 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //update
-        clearCache()
+        if (useCache) {
+            clearCache()
+        }
 
         //emit
         if (!isErr) {
@@ -953,7 +971,9 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //update
-        clearCache()
+        if (useCache) {
+            clearCache()
+        }
 
         //emit
         if (!isErr) {

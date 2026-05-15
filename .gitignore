@@ -1,3 +1,6 @@
 node_modules
 .opencode
 .claude
+
+db_basic.json
+db_cache.json

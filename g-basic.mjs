@@ -222,6 +222,68 @@ async function test() {
     let ss2 = await wo.select()
     console.log('select all final', ss2)
 
+    //清除數據, 後續cache測試共用users表
+    await wo.delAll()
+
+    //woc, 啟用useCache
+    let woc = WOrm({
+        ...opt,
+        useCache: true,
+    })
+
+    let rsc = [
+        {
+            time: '2025-01-01T00:00:00Z',
+            name: 'peter',
+            value: 123,
+        },
+        {
+            time: '2025-01-01T00:01:00Z',
+            name: 'rosemary',
+            value: 123.456,
+        },
+        {
+            time: '2025-01-01T00:02:00Z',
+            name: 'kettle',
+            value: 456,
+        },
+    ]
+
+    let rscm = [
+        {
+            time: '2025-01-01T00:01:00Z',
+            name: 'rosemary(modify)',
+            value: 654.321,
+        },
+    ]
+
+    //insert
+    await woc.insert(rsc)
+
+    //select all (1st time, 從DB讀取並填入快取)
+    let sc1 = await woc.select()
+    sc1 = sc1.sort((a, b) => a.time - b.time)
+    console.log('select all 1st (fill cache)', sc1)
+
+    //select all (2nd time, 命中快取, 內容須與第一次相同)
+    let sc2 = await woc.select()
+    sc2 = sc2.sort((a, b) => a.time - b.time)
+    console.log('select all 2nd (cache hit)', sc2)
+
+    //save (更新rosemary, 觸發快取重設)
+    await woc.save(rscm, { autoInsert: false })
+        .then(function(msg) {
+            console.log('save (invalidate cache) then', msg)
+        })
+        .catch(function(msg) {
+            console.log('save (invalidate cache) catch', msg)
+        })
+
+    //select all (3rd time, 快取已重設, 從DB重新讀取, 須反映rosemary更新)
+    let sc3 = await woc.select()
+    sc3 = sc3.sort((a, b) => a.time - b.time)
+    console.log('select all 3rd (reload after save)', sc3)
+
 }
 test()
 // change delAll
@@ -319,6 +381,27 @@ test()
 //     name: 'rosemary(modify)',
 //     value: 113.98
 //   }
+// ]
+// change delAll
+// select all 1st (fill cache) [
+//   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
+//   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
+//   { time: 2025-01-01T00:02:00.000Z, name: 'kettle', value: 456 }
+// ]
+// select all 2nd (cache hit) [
+//   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
+//   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
+//   { time: 2025-01-01T00:02:00.000Z, name: 'kettle', value: 456 }
+// ]
+// save (invalidate cache) then [ { n: 1, nModified: 1, ok: 1 } ]
+// select all 3rd (reload after save) [
+//   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
+//   {
+//     time: 2025-01-01T00:01:00.000Z,
+//     name: 'rosemary(modify)',
+//     value: 654.321
+//   },
+//   { time: 2025-01-01T00:02:00.000Z, name: 'kettle', value: 456 }
 // ]
 
 //node g-basic.mjs
