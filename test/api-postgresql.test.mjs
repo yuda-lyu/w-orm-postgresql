@@ -373,47 +373,47 @@ describe('basic', function() {
             })
         vget[6] = rt
 
-        //selectByTime
+        //selectByPk
         rt = null
         // vans[18] = { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 }
-        await wo.selectByTime('2025-01-01T00:10:00Z')
+        await wo.selectByPk('2025-01-01T00:10:00Z')
             .then(function(msg) {
-                // console.log('selectByTime then', msg)
-                // selectByTime { time: 2025-01-01T00:10:00.000Z, name: 'rosemary(modify)', value: 113.98 }
+                // console.log('selectByPk then', msg)
+                // selectByPk { time: 2025-01-01T00:10:00.000Z, name: 'rosemary(modify)', value: 113.98 }
                 rt = msg
             })
             .catch(function(msg) {
-                // console.log('selectByTime catch', msg)
+                // console.log('selectByPk catch', msg)
                 rt = msg.toString()
             })
         vget[18] = rt
 
-        //selectByTime by time not existed
+        //selectByPk by pk not existed
         rt = null
         // vans[19] = null
-        await wo.selectByTime('2024-01-01T00:00:00Z')
+        await wo.selectByPk('2024-01-01T00:00:00Z')
             .then(function(msg) {
-                // console.log('selectByTime by time not existed then', msg)
-                // selectByTime by time not existed null
+                // console.log('selectByPk by pk not existed then', msg)
+                // selectByPk by pk not existed null
                 rt = msg
             })
             .catch(function(msg) {
-                // console.log('selectByTime by time not existed catch', msg)
+                // console.log('selectByPk by pk not existed catch', msg)
                 rt = msg.toString()
             })
         vget[19] = rt
 
-        //selectByTime by time invalid, 未給有效主鍵值視為查無數據
+        //selectByPk by pk invalid, 未給有效主鍵值視為查無數據
         rt = null
         // vans[20] = null
-        await wo.selectByTime('abc')
+        await wo.selectByPk('abc')
             .then(function(msg) {
-                // console.log('selectByTime by time invalid then', msg)
-                // selectByTime by time invalid null
+                // console.log('selectByPk by pk invalid then', msg)
+                // selectByPk by pk invalid null
                 rt = msg
             })
             .catch(function(msg) {
-                // console.log('selectByTime by time invalid catch', msg)
+                // console.log('selectByPk by pk invalid catch', msg)
                 rt = msg.toString()
             })
         vget[20] = rt
@@ -674,30 +674,30 @@ describe('basic', function() {
             })
         vget[17] = rt
 
-        //selectByTime (1st time, 從DB讀取並填入快取)
+        //selectByPk (1st time, 從DB讀取並填入快取)
         rt = null
         // vans[21] = { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary(modify)', value: 654.321 }
-        await woc.selectByTime('2025-01-01T00:01:00Z')
+        await woc.selectByPk('2025-01-01T00:01:00Z')
             .then(function(msg) {
-                // console.log('selectByTime 1st then', msg)
+                // console.log('selectByPk 1st then', msg)
                 rt = msg
             })
             .catch(function(msg) {
-                // console.log('selectByTime 1st catch', msg)
+                // console.log('selectByPk 1st catch', msg)
                 rt = msg.toString()
             })
         vget[21] = rt
 
-        //selectByTime (2nd time, 命中快取, 內容須與第一次相同)
+        //selectByPk (2nd time, 命中快取, 內容須與第一次相同)
         rt = null
         // vans[22] = vans[21]
-        await woc.selectByTime('2025-01-01T00:01:00Z')
+        await woc.selectByPk('2025-01-01T00:01:00Z')
             .then(function(msg) {
-                // console.log('selectByTime 2nd then', msg)
+                // console.log('selectByPk 2nd then', msg)
                 rt = msg
             })
             .catch(function(msg) {
-                // console.log('selectByTime 2nd catch', msg)
+                // console.log('selectByPk 2nd catch', msg)
                 rt = msg.toString()
             })
         vget[22] = rt
@@ -758,19 +758,19 @@ describe('basic', function() {
         assert.strict.deepStrictEqual(vget[6], vans[6])
     })
 
-    //vans[18]~vans[22]為後續新增之selectByTime, 為不更動既有編號故接續於末號之後
+    //vans[18]~vans[22]為後續新增之selectByPk, 為不更動既有編號故接續於末號之後
     vans[18] = { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 }
-    it(`should get ${JSON.stringify(vans[18])} for selectByTime`, async function() {
+    it(`should get ${JSON.stringify(vans[18])} for selectByPk`, async function() {
         assert.strict.deepStrictEqual(vget[18], vans[18])
     })
 
     vans[19] = null
-    it(`should get ${JSON.stringify(vans[19])} for selectByTime by time not existed`, async function() {
+    it(`should get ${JSON.stringify(vans[19])} for selectByPk by pk not existed`, async function() {
         assert.strict.deepStrictEqual(vget[19], vans[19])
     })
 
     vans[20] = null
-    it(`should get ${JSON.stringify(vans[20])} for selectByTime by time invalid`, async function() {
+    it(`should get ${JSON.stringify(vans[20])} for selectByPk by pk invalid`, async function() {
         assert.strict.deepStrictEqual(vget[20], vans[20])
     })
 
@@ -877,12 +877,12 @@ describe('basic', function() {
     })
 
     vans[21] = { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary(modify)', value: 654.321 }
-    it(`should get ${JSON.stringify(vans[21])} for selectByTime (1st, fill cache)`, async function() {
+    it(`should get ${JSON.stringify(vans[21])} for selectByPk (1st, fill cache)`, async function() {
         assert.strict.deepStrictEqual(vget[21], vans[21])
     })
 
     vans[22] = vans[21]
-    it(`should get ${JSON.stringify(vans[22])} for selectByTime (2nd, cache hit)`, async function() {
+    it(`should get ${JSON.stringify(vans[22])} for selectByPk (2nd, cache hit)`, async function() {
         assert.strict.deepStrictEqual(vget[22], vans[22])
     })
 
@@ -954,7 +954,7 @@ describe('insert nInserted', function() {
         vget[7] = ss.length
 
         //同批重複者僅首筆入庫
-        let vdup = await wo.selectByTime('2025-02-01T00:05:00Z')
+        let vdup = await wo.selectByPk('2025-02-01T00:05:00Z')
         vget[8] = vdup.name
 
     })
@@ -1028,7 +1028,7 @@ describe('save concurrency', function() {
             wo.save({ time: tMerge, name: 'merge-name' }),
             wo.save({ time: tMerge, value: 99 }),
         ])
-        vget[1] = await wo.selectByTime(tMerge)
+        vget[1] = await wo.selectByPk(tMerge)
 
         //併發save對全新time, autoInsert僅一次且不得報錯
         let tNew = '2025-03-01T00:01:00Z'
@@ -1048,12 +1048,12 @@ describe('save concurrency', function() {
         let tDiff = '2025-03-01T00:03:00Z'
         await wo.insert({ time: tDiff, name: 'diff', value: 5 })
         vget[6] = await wo.save({ time: tDiff, value: 6 })
-        vget[7] = await wo.selectByTime(tDiff)
+        vget[7] = await wo.selectByPk(tDiff)
 
         //save(autoInsert=false)對不存在之time不得插入
         let tNone = '2025-03-01T00:04:00Z'
         vget[8] = await wo.save({ time: tNone, name: 'none' }, { autoInsert: false })
-        vget[9] = await wo.selectByTime(tNone)
+        vget[9] = await wo.selectByPk(tNone)
 
         //併發save(autoInsert=false)對既有time之不同欄位, 各欄位皆須保留且不得報錯
         let tUpd = '2025-03-01T00:05:00Z'
@@ -1063,7 +1063,7 @@ describe('save concurrency', function() {
             wo.save({ time: tUpd, value: 88 }, { autoInsert: false }),
         ])
         vget[10] = rsu.filter((v) => v[0].ok !== 1).length
-        vget[11] = await wo.selectByTime(tUpd)
+        vget[11] = await wo.selectByPk(tUpd)
 
     })
 
@@ -1148,7 +1148,7 @@ describe('spec compliance', function() {
         let tPart = '2025-04-01T00:00:00Z'
         await wo.insert({ time: tPart, name: 'peter', value: 5 })
         vget[1] = await wo.save({ time: tPart, value: 5 })
-        vget[2] = await wo.selectByTime(tPart)
+        vget[2] = await wo.selectByPk(tPart)
 
         //save單筆失敗不中斷整批, 失敗筆須帶err
         let tOk = '2025-04-01T00:01:00Z'
@@ -1302,6 +1302,138 @@ describe('spec compliance', function() {
 })
 
 
+describe('custom pk', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(120000)
+
+        //wo, 以opt.pk指定主鍵欄位為code, 驗證select以外之五函數皆改以該欄位認定主鍵
+        let cl = 'custompk'
+        let wo = WOrm({
+            ...genOpt(cl),
+            pk: 'code',
+        })
+
+        //createTable, pk留空以驗證採用建構時之opt.pk
+        await wo.createTable(cl, null, {
+            code: 'abc',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //insert以code認定主鍵
+        vget[1] = await wo.insert([
+            { code: 'c1', name: 'peter', value: 1 },
+            { code: 'c2', name: 'rosemary', value: 2 },
+        ])
+
+        //insert同code者跳過, 證明ON CONFLICT係以code為衝突目標
+        vget[2] = await wo.insert({ code: 'c1', name: 'other', value: 9 })
+
+        //selectByPk以code查找
+        vget[3] = await wo.selectByPk('c1')
+
+        //selectByPk未命中
+        vget[4] = await wo.selectByPk('notexist')
+
+        //save只給部份欄位且值不同, 未給之欄位須保留
+        vget[5] = await wo.save({ code: 'c1', value: 5 })
+        vget[6] = await wo.selectByPk('c1')
+
+        //save合併後內容相同不更新
+        vget[7] = await wo.save({ code: 'c1', value: 5 })
+
+        //save對不存在之code自動插入
+        vget[8] = await wo.save({ code: 'c3', name: 'sandler' })
+
+        //del以code刪除
+        vget[9] = await wo.del({ code: 'c2' })
+
+        //del未帶有效code
+        let rsd = await wo.del({ name: 'no-code' })
+        vget[10] = {
+            n: rsd[0].n,
+            nDeleted: rsd[0].nDeleted,
+            ok: rsd[0].ok,
+            hasErr: isestr(rsd[0].err),
+        }
+
+        //insert未帶有效code須reject
+        vget[11] = await wo.insert({ name: 'no-code' })
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+
+        //最終筆數, 僅存c1與c3
+        vget[12] = (await wo.select()).length
+
+    })
+
+    vans[1] = { n: 2, nInserted: 2, ok: 1 }
+    it(`should get ${JSON.stringify(vans[1])} for insert with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = { n: 1, nInserted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[2])} for insert with existed custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = { code: 'c1', name: 'peter', value: 1 }
+    it(`should get ${JSON.stringify(vans[3])} for selectByPk with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = null
+    it(`should get ${JSON.stringify(vans[4])} for selectByPk by custom pk not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[5])} for save with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = { code: 'c1', name: 'peter', value: 5 }
+    it(`should get ${JSON.stringify(vans[6])} for keeping field not given in save with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = [{ n: 1, nInserted: 0, nModified: 0, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[7])} for save with same content by custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = [{ n: 1, nInserted: 1, nModified: 0, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[8])} for save(autoInsert) with custom pk not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = [{ n: 1, nDeleted: 1, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[9])} for del with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = { n: 0, nDeleted: 0, ok: 0, hasErr: true }
+    it(`should get ${JSON.stringify(vans[10])} for del without valid custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = 'rejected'
+    it(`should get ${JSON.stringify(vans[11])} for insert without valid custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+    vans[12] = 2
+    it(`should get ${JSON.stringify(vans[12])} for records after all operations with custom pk`, async function() {
+        assert.strict.deepStrictEqual(vget[12], vans[12])
+    })
+
+})
+
+
 //runProc, 另起行程對同一資料表操作, 用於驗證跨行程之原子性
 //子行程以--input-type=module執行, 並以pathToFileURL轉換src路徑, 避免專案路徑含非ASCII字元而無法import
 function runProc(tag, opt, mode, payload) {
@@ -1416,7 +1548,7 @@ describe('cross-process concurrency', function() {
         vget[5] = rpss.reduce((sum, v) => sum + (v.nInserted || 0), 0)
 
         //10欄須全數保留且值為各自行程之tag
-        let vSav = await woSav.selectByTime(tSav)
+        let vSav = await woSav.selectByPk(tSav)
         vget[6] = Array.from({ length: 10 }, (v, k) => k)
             .filter((k) => {
                 let tag = k <= 4 ? 'p1' : 'p2'

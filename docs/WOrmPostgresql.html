@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByTime">selectByTime</a></li></ul></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul>
     
 </nav>
 
@@ -74,13 +74,16 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>操作資料庫(PostgreSQL)</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>操作資料庫(PostgreSQL)</p>
+<p>本套件之主鍵欄位由opt.pk指定，預設為time，select以外之五函數皆以此欄位認定主鍵。
+因主鍵得為承載業務語義之欄位(如時序資料之觀測時間)，insert與save於輸入未帶有效主鍵值時不自動補值，
+一律以reject回報；del亦不補值，該筆回ok:0與err。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line37">line 37</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line42">line 42</a>
     </li></ul></dd>
     
 
@@ -339,6 +342,46 @@
 
         <tr>
             
+                <td class="name"><code>pk</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'time'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入主鍵欄位名字串，預設'time'</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
                 <td class="name"><code>useCache</code></td>
             
 
@@ -453,7 +496,7 @@
 
     
 
-    <h4 class="name" id=".createTable"><span class="type-signature type-signature-async, static">(async, static) </span>createTable<span class="signature">(cl, pk, arr)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id=".createTable"><span class="type-signature type-signature-async, static">(async, static) </span>createTable<span class="signature">(cl, pk<span class="signature-attributes">opt</span>, arr)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -463,13 +506,15 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>創建資料表</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>創建資料表
+註: pk未給時採建構時之opt.pk。因insert與save倚賴主鍵之唯一約束達成原子性，
+若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line200">line 200</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line227">line 227</a>
     </li></ul></dd>
     
 
@@ -529,7 +574,11 @@
         <th>Type</th>
 
         
+        <th>Attributes</th>
+        
 
+        
+        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -555,7 +604,19 @@
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入資料表名字串</p></td>
@@ -579,10 +640,26 @@
             </td>
 
             
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
 
+                
+
+                
+                </td>
             
 
-            <td class="description last"><p>輸入主鍵字串</p></td>
+            
+                <td class="default">
+                
+                    <code>opt.pk</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入主鍵欄位名字串，預設為建構時之opt.pk</p></td>
         </tr>
 
     
@@ -606,7 +683,19 @@
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入數據物件陣列或數據物件</p></td>
@@ -675,14 +764,14 @@
     <dd class="tag-description"><ul class="dummy"><li><p>刪除數據</p>
 <p>回傳陣列恆與輸入等長，各筆之n與nDeleted皆為主鍵命中筆數，值為0或1，未命中為0且屬正常結果。
 判斷某筆是否真的被刪除一律以nDeleted為準。
-未帶有效time者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
+未帶有效主鍵值者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
 以此與[主鍵未命中]之ok:1區辨。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line977">line 977</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1021">line 1021</a>
     </li></ul></dd>
     
 
@@ -845,7 +934,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1127">line 1127</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1171">line 1171</a>
     </li></ul></dd>
     
 
@@ -1017,16 +1106,16 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵time不存在時寫入，已存在者跳過且不覆寫</p>
+    <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫</p>
 <p>n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
-不視為錯誤。同批含重複time時僅首筆計入nInserted。
-因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。</p></li></ul></dd>
+不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
+因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line497">line 497</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line538">line 538</a>
     </li></ul></dd>
     
 
@@ -1188,13 +1277,13 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 [內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
 故只給部份欄位且該些欄位值皆與現值相同時，合併結果等於現值，nModified為0，
 令nModified忠實反映資料庫端是否真的寫入。
-因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。</p></li></ul></dd>
+因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line634">line 634</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line675">line 675</a>
     </li></ul></dd>
     
 
@@ -1481,7 +1570,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line286">line 286</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line319">line 319</a>
     </li></ul></dd>
     
 
@@ -1683,7 +1772,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 
     
 
-    <h4 class="name" id=".selectByTime"><span class="type-signature type-signature-async, static">(async, static) </span>selectByTime<span class="signature">(time)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id=".selectByPk"><span class="type-signature type-signature-async, static">(async, static) </span>selectByPk<span class="signature">(pk)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -1693,16 +1782,16 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳</p>
-<p>函數名依主鍵欄位命名為selectByTime而不另掛selectById別名，因本套件之主鍵為具業務語義之time，
-與以無語義識別碼為主鍵者性質不同，該差異須由呼叫端知悉而非由別名掩蓋。
-主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>由主鍵查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
+註: 本套件之主鍵欄位由建構時之opt.pk指定，預設為time</p>
+<p>主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
+主鍵值之型別與欄位不符時PostgreSQL回報22P02或22007，亦屬主鍵值無效而回傳null。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line381">line 381</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line414">line 414</a>
     </li></ul></dd>
     
 
@@ -1774,13 +1863,16 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 
         <tr>
             
-                <td class="name"><code>time</code></td>
+                <td class="name"><code>pk</code></td>
             
 
             <td class="type">
             
                 
 <span class="param-type">String</span>
+|
+
+<span class="param-type">Number</span>
 |
 
 <span class="param-type">Date</span>
@@ -1794,7 +1886,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 
             
 
-            <td class="description last"><p>輸入主鍵time值，本套件以time欄位為主鍵</p></td>
+            <td class="description last"><p>輸入主鍵值，即數據之主鍵欄位值</p></td>
         </tr>
 
     
@@ -1820,7 +1912,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳數據物件，若無此time則回傳null，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳數據物件，若無此主鍵則回傳null，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1862,7 +1954,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Aug 16 2026 22:57:35 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Aug 16 2026 23:54:17 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

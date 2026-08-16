@@ -26,11 +26,16 @@ import pmSeries from 'wsemi/src/pmSeries.mjs'
 /**
  * 操作資料庫(PostgreSQL)
  *
+ * 本套件之主鍵欄位由opt.pk指定，預設為time，select以外之五函數皆以此欄位認定主鍵。
+ * 因主鍵得為承載業務語義之欄位(如時序資料之觀測時間)，insert與save於輸入未帶有效主鍵值時不自動補值，
+ * 一律以reject回報；del亦不補值，該筆回ok:0與err。
+ *
  * @class
  * @param {Object} [opt={}] 輸入設定物件，預設{}
  * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，預設'postgresql://127.0.0.1:5432'
  * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，預設'worm'
  * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，預設'test'
+ * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，預設'time'
  * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
  */
@@ -61,6 +66,26 @@ function WOrmPostgresql(opt = {}) {
     let useCache = get(opt, 'useCache')
     if (!isbol(useCache)) {
         useCache = false
+    }
+
+    //pkName, 主鍵欄位名, select以外之五函數皆以此欄位認定主鍵, 預設為time
+    let pkName = get(opt, 'pk')
+    if (!isestr(pkName)) {
+        pkName = 'time'
+    }
+
+    //checkPk, 判定主鍵值是否有效
+    //因主鍵欄位得由呼叫端指定, 其型別隨欄位而異, 故此處僅要求有給值而不限定型別,
+    //型別與欄位不符者由PostgreSQL回報, 各函數再依其規格處置
+    function checkPk(pkv) {
+        return isestr(pkv) || isnum(pkv) || isbol(pkv) || isDate(pkv)
+    }
+
+    //isErrPkType, 判定錯誤是否為[主鍵值型別與欄位不符]
+    //22P02為invalid_text_representation, 22007為invalid_datetime_format
+    function isErrPkType(err) {
+        let code = get(err, 'code')
+        return code === '22P02' || code === '22007'
     }
 
     //getValueType
@@ -115,7 +140,7 @@ function WOrmPostgresql(opt = {}) {
         let allKeys = keys(obj)
 
         //conflictKeys
-        let conflictKeys = ['time']
+        let conflictKeys = [pkName]
 
         //updateKeys
         let updateKeys = filter(allKeys, (k) => {
@@ -190,14 +215,22 @@ function WOrmPostgresql(opt = {}) {
 
     /**
      * 創建資料表
+     * 註: pk未給時採建構時之opt.pk。因insert與save倚賴主鍵之唯一約束達成原子性，
+     * 若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值
      *
      * @memberOf WOrmPostgresql
      * @param {String} cl 輸入資料表名字串
-     * @param {String} pk 輸入主鍵字串
+     * @param {String} [pk=opt.pk] 輸入主鍵欄位名字串，預設為建構時之opt.pk
      * @param {Array|Object} arr 輸入數據物件陣列或數據物件
      * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
      */
     async function createTable(cl, pk, arr) {
+
+        //pk, 未給時採建構時設定之主鍵欄位
+        if (!isestr(pk)) {
+            pk = pkName
+        }
+
         let isErr = false
         let res = null
 
@@ -368,29 +401,29 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
+     * 由主鍵查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
+     * 註: 本套件之主鍵欄位由建構時之opt.pk指定，預設為time
      *
-     * 函數名依主鍵欄位命名為selectByTime而不另掛selectById別名，因本套件之主鍵為具業務語義之time，
-     * 與以無語義識別碼為主鍵者性質不同，該差異須由呼叫端知悉而非由別名掩蓋。
      * 主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
+     * 主鍵值之型別與欄位不符時PostgreSQL回報22P02或22007，亦屬主鍵值無效而回傳null。
      *
      * @memberOf WOrmPostgresql
-     * @param {String|Date} time 輸入主鍵time值，本套件以time欄位為主鍵
-     * @returns {Promise} 回傳Promise，resolve回傳數據物件，若無此time則回傳null，reject回傳錯誤訊息
+     * @param {String|Number|Date} pk 輸入主鍵值，即數據之主鍵欄位值
+     * @returns {Promise} 回傳Promise，resolve回傳數據物件，若無此主鍵則回傳null，reject回傳錯誤訊息
      */
-    async function selectByTime(time) {
+    async function selectByPk(pk) {
         let isErr = false
         let res = null
 
         //check
-        if (!isDate(time)) {
-            //未給有效主鍵值視為查無數據, 判定基準與insert、save、del內對time之認定一致
+        if (!checkPk(pk)) {
+            //未給有效主鍵值視為查無數據, 判定基準與insert、save、del內對主鍵之認定一致
             return null
         }
 
-        //find, 本套件以time欄位為主鍵, 與save、del、genConflictSQL之認定一致
+        //find, 以建構時設定之主鍵欄位查找, 與insert、save、del、genConflictSQL之認定一致
         let find = {
-            time,
+            [pkName]: pk,
         }
 
         //cache, 與select共用快取, 因快取鍵值由find與order組成, 故此處等同select(find)之結果
@@ -444,7 +477,7 @@ function WOrmPostgresql(opt = {}) {
 
             //check
             if (!isarr(rows)) {
-                throw new Error(`can not select by time[${time}]`)
+                throw new Error(`can not select by pk[${pk}]`)
             }
 
             //cache
@@ -460,14 +493,22 @@ function WOrmPostgresql(opt = {}) {
                 res = v
             }
             else {
-                //不存在time, 回傳null
+                //不存在主鍵, 回傳null
                 res = null
             }
 
         }
         catch (err) {
-            isErr = true
-            res = err
+
+            //check, 主鍵值之型別與欄位不符者亦屬主鍵值無效, 依規格回傳null而不reject
+            if (isErrPkType(err)) {
+                res = null
+            }
+            else {
+                isErr = true
+                res = err
+            }
+
         }
         finally {
             await client.end()
@@ -484,11 +525,11 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 插入數據，僅於主鍵time不存在時寫入，已存在者跳過且不覆寫
+     * 插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫
      *
      * n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
-     * 不視為錯誤。同批含重複time時僅首筆計入nInserted。
-     * 因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。
+     * 不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
+     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -538,10 +579,10 @@ function WOrmPostgresql(opt = {}) {
                 data = [data]
             }
 
-            //check time
+            //check pk, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤
             data = map(data, function(v, k) {
-                if (!isDate(v.time)) {
-                    throw new Error(`invalid data[${k}].time[${v.time}]`)
+                if (!checkPk(get(v, pkName))) {
+                    throw new Error(`invalid data[${k}].${pkName}[${get(v, pkName)}]`)
                 }
                 return v
             })
@@ -556,10 +597,10 @@ function WOrmPostgresql(opt = {}) {
             // console.log('mr.query', mr.query)
             // console.log('mr.values', mr.values)
 
-            //添加conflict, 令已存在time者跳過而不中斷整批插入, 主鍵認定與genConflictSQL一致
-            //由PostgreSQL於單一語句內原子完成[檢查time未存在]與[寫入], 併發時同一time僅有一次成功,
-            //同批含重複time時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
-            let sql = `${mr.query} ON CONFLICT (time) DO NOTHING`
+            //添加conflict, 令已存在主鍵者跳過而不中斷整批插入, 主鍵認定與genConflictSQL一致
+            //由PostgreSQL於單一語句內原子完成[檢查主鍵未存在]與[寫入], 併發時同一主鍵僅有一次成功,
+            //同批含重複主鍵時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
+            let sql = `${mr.query} ON CONFLICT (${pkName}) DO NOTHING`
 
             //nAll
             let nAll = size(data)
@@ -623,7 +664,7 @@ function WOrmPostgresql(opt = {}) {
      * [內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
      * 故只給部份欄位且該些欄位值皆與現值相同時，合併結果等於現值，nModified為0，
      * 令nModified忠實反映資料庫端是否真的寫入。
-     * 因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。
+     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -674,10 +715,10 @@ function WOrmPostgresql(opt = {}) {
                 data = [data]
             }
 
-            //check time
+            //check pk, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤
             data = map(data, function(v, k) {
-                if (!isDate(v.time)) {
-                    throw new Error(`invalid data[${k}].time[${v.time}]`)
+                if (!checkPk(get(v, pkName))) {
+                    throw new Error(`invalid data[${k}].${pkName}[${get(v, pkName)}]`)
                 }
                 return v
             })
@@ -688,6 +729,9 @@ function WOrmPostgresql(opt = {}) {
                 //rest
                 let rest = null
 
+                //pkv
+                let pkv = get(v, pkName)
+
                 //_v
                 let _v = null
                 if (true) {
@@ -697,7 +741,7 @@ function WOrmPostgresql(opt = {}) {
                         type: 'select',
                         table: cl,
                         where: {
-                            time: v.time,
+                            [pkName]: pkv,
                         },
                         // limit: 10,
                         // order,
@@ -726,7 +770,7 @@ function WOrmPostgresql(opt = {}) {
                 if (iseobj(_v)) {
 
                     //_vt
-                    let _vt = omit(_v, 'time')
+                    let _vt = omit(_v, pkName)
                     // console.log('_vt', _vt)
 
                     //vt, [內容相同]之判定基準為[待寫入物件合併進現值後與現值相同],
@@ -734,7 +778,7 @@ function WOrmPostgresql(opt = {}) {
                     //合併採淺層覆蓋, 與後端以EXCLUDED整欄取代之寫入行為一致
                     let vt = {
                         ..._vt,
-                        ...omit(v, 'time'),
+                        ...omit(v, pkName),
                     }
                     // console.log('vt', vt)
 
@@ -789,11 +833,11 @@ function WOrmPostgresql(opt = {}) {
                     // console.log('mr.query', mr.query)
                     // console.log('mr.values', mr.values)
 
-                    //添加conflict, 僅有time欄位時genConflictSQL無可更新欄位而回傳空字串,
-                    //此時退回DO NOTHING, 以免併發插入同一time者報錯
+                    //添加conflict, 僅有主鍵欄位時genConflictSQL無可更新欄位而回傳空字串,
+                    //此時退回DO NOTHING, 以免併發插入同一主鍵者報錯
                     let conflict = genConflictSQL(v)
                     if (!isestr(conflict)) {
-                        conflict = 'ON CONFLICT (time) DO NOTHING'
+                        conflict = `ON CONFLICT (${pkName}) DO NOTHING`
                     }
 
                     //sql, xmax為0表該列由本語句插入, 非0表係由DO UPDATE更新而來,
@@ -864,15 +908,15 @@ function WOrmPostgresql(opt = {}) {
                 }
                 else {
                     //未開啟autoInsert則僅能更新既有數據, 不可用INSERT以免無中生有,
-                    //由UPDATE...WHERE time原子完成[查找time]與[更新], 併發時不會遺失更新
+                    //由UPDATE...WHERE主鍵原子完成[查找主鍵]與[更新], 併發時不會遺失更新
 
                     //mr
                     let mr = mongoSql.sql({
                         type: 'update',
                         table: cl,
-                        updates: omit(v, 'time'),
+                        updates: omit(v, pkName),
                         where: {
-                            time: v.time,
+                            [pkName]: pkv,
                         },
                     })
                     // console.log('mr', mr)
@@ -967,7 +1011,7 @@ function WOrmPostgresql(opt = {}) {
      *
      * 回傳陣列恆與輸入等長，各筆之n與nDeleted皆為主鍵命中筆數，值為0或1，未命中為0且屬正常結果。
      * 判斷某筆是否真的被刪除一律以nDeleted為準。
-     * 未帶有效time者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
+     * 未帶有效主鍵值者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
      * 以此與[主鍵未命中]之ok:1區辨。
      *
      * @memberOf WOrmPostgresql
@@ -1024,19 +1068,19 @@ function WOrmPostgresql(opt = {}) {
                 //rest
                 let rest = null
 
-                //time
-                let time = get(v, 'time')
+                //pkv
+                let pkv = get(v, pkName)
 
-                //check time, 未帶有效主鍵者不補值亦不送查詢,
+                //check pk, 未帶有效主鍵者不補值亦不送查詢,
                 //因mongo-sql會將無效值轉為null而誤中其他數據, 故直接視為該筆無法處理
-                if (!isDate(time)) {
+                if (!checkPk(pkv)) {
 
                     //rest
                     rest = {
                         n: 0,
                         nDeleted: 0,
                         ok: 0,
-                        err: `invalid time[${time}]`,
+                        err: `invalid ${pkName}[${pkv}]`,
                     }
 
                     return rest
@@ -1047,7 +1091,7 @@ function WOrmPostgresql(opt = {}) {
                     type: 'delete',
                     table: cl,
                     where: {
-                        time,
+                        [pkName]: pkv,
                     },
                 })
                 // console.log('mr', mr)
@@ -1228,7 +1272,7 @@ function WOrmPostgresql(opt = {}) {
     //save
     ee.createTable = createTable
     ee.select = select
-    ee.selectByTime = selectByTime
+    ee.selectByPk = selectByPk
     ee.insert = insert
     ee.save = save
     ee.del = del

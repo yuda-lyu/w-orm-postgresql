@@ -168,13 +168,13 @@ async function test() {
     let so = await wo.select({ name: 'rosemary' })
     console.log('select by name', so)
 
-    //selectByTime
-    let sb = await wo.selectByTime('2025-01-01T00:10:00Z')
-    console.log('selectByTime', sb)
+    //selectByPk
+    let sb = await wo.selectByPk('2025-01-01T00:10:00Z')
+    console.log('selectByPk', sb)
 
-    //selectByTime by time not existed
-    let sbn = await wo.selectByTime('2024-01-01T00:00:00Z')
-    console.log('selectByTime by time not existed', sbn)
+    //selectByPk by pk not existed
+    let sbn = await wo.selectByPk('2024-01-01T00:00:00Z')
+    console.log('selectByPk by pk not existed', sbn)
 
     //select by $and, $gt, $lt
     let spa = await wo.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
@@ -334,12 +334,12 @@ test()
 //   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },
 //   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 }
 // ]
-// selectByTime {
+// selectByPk {
 //   time: 2025-01-01T00:10:00.000Z,
 //   name: 'rosemary(modify)',
 //   value: 113.98
 // }
-// selectByTime by time not existed null
+// selectByPk by pk not existed null
 // select by $and, $gt, $lt [
 //   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
 //   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },
