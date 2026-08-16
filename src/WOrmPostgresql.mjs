@@ -368,6 +368,118 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
+     * 由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
+     *
+     * @memberOf WOrmPostgresql
+     * @param {String|Date} time 輸入主鍵time值，本套件以time欄位為主鍵
+     * @returns {Promise} 回傳Promise，resolve回傳數據物件，若無此time則回傳null，reject回傳錯誤訊息
+     */
+    async function selectByTime(time) {
+        let isErr = false
+        let res = null
+
+        //check
+        if (!isDate(time)) {
+            //未給有效主鍵值視為查無數據, 判定基準與insert、save、del內對time之認定一致
+            return null
+        }
+
+        //find, 本套件以time欄位為主鍵, 與save、del、genConflictSQL之認定一致
+        let find = {
+            time,
+        }
+
+        //cache, 與select共用快取, 因快取鍵值由find與order組成, 故此處等同select(find)之結果
+        if (useCache) {
+            let cache = getCache(find, {})
+            if (isarr(cache)) {
+                return get(cache, 0, null)
+            }
+        }
+
+        //client
+        let client = new PgClient({ connectionString })
+
+        //connect
+        try {
+
+            //connect
+            await client.connect()
+
+        }
+        catch (err) {
+            isErr = true
+            res = err
+            client = null
+        }
+
+        //check
+        if (isErr) {
+            return Promise.reject(res)
+        }
+
+        try {
+
+            //mr, 不使用limit以令結果與select(find)完全等價, 方能安全共用快取,
+            //time為主鍵時本就僅回傳1筆, 不會因此多拉數據
+            let mr = mongoSql.sql({
+                type: 'select',
+                table: cl,
+                where: find,
+            })
+            // console.log('mr', mr)
+            // console.log('mr.query', mr.query)
+            // console.log('mr.values', mr.values)
+
+            //select
+            let r = await client.query(mr.query, mr.values)
+            // console.log('r', r)
+
+            //rows
+            let rows = get(r, 'rows')
+
+            //check
+            if (!isarr(rows)) {
+                throw new Error(`can not select by time[${time}]`)
+            }
+
+            //cache
+            if (useCache) {
+                setCache(find, {}, rows)
+            }
+
+            //v
+            let v = get(rows, 0, null)
+
+            //check, 判定基準與save、del內對既有數據之認定一致
+            if (iseobj(v)) {
+                res = v
+            }
+            else {
+                //不存在time, 回傳null
+                res = null
+            }
+
+        }
+        catch (err) {
+            isErr = true
+            res = err
+        }
+        finally {
+            await client.end()
+            client = null
+        }
+        // console.log('res', res)
+
+        //check
+        if (isErr) {
+            return Promise.reject(res)
+        }
+
+        return res
+    }
+
+    /**
      * 插入數據
      *
      * @memberOf WOrmPostgresql
@@ -436,18 +548,22 @@ function WOrmPostgresql(opt = {}) {
             // console.log('mr.query', mr.query)
             // console.log('mr.values', mr.values)
 
-            //nAll, nInsert
-            let nAll = size(data)
-            let nInsert = nAll //一次插入全部數據加速, 但也因此沒法個別處理conflict, 無法個別計算已插入數量
+            //添加conflict, 令已存在time者跳過而不中斷整批插入, 主鍵認定與genConflictSQL一致
+            //由PostgreSQL於單一語句內原子完成[檢查time未存在]與[寫入], 併發時同一time僅有一次成功,
+            //同批含重複time時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
+            let sql = `${mr.query} ON CONFLICT (time) DO NOTHING`
 
-            //insert
-            await client.query(mr.query, mr.values)
-                .then(() => {
+            //nAll
+            let nAll = size(data)
+
+            //insert, ON CONFLICT DO NOTHING時rowCount即為實際插入筆數
+            await client.query(sql, mr.values)
+                .then((r) => {
 
                     //res
                     res = {
                         n: nAll,
-                        nInserted: nInsert,
+                        nInserted: r.rowCount,
                         ok: 1,
                     }
 
@@ -588,9 +704,10 @@ function WOrmPostgresql(opt = {}) {
 
                 }
 
-                //check
+                //快速路徑, 先不寫入直接由前述預讀判斷內容是否相同, 內容相同者本就不須寫入,
+                //預讀值縱使已被其他寫入者更動而過期亦不影響正確性, 因內容相同時本次save等價於無操作,
+                //無操作可視為於預讀當下即已完成, 其後他人之寫入結果與[本次save先執行再輪到他人]相同
                 if (iseobj(_v)) {
-                    //存在
 
                     //_vt
                     let _vt = omit(_v, 'time')
@@ -611,69 +728,33 @@ function WOrmPostgresql(opt = {}) {
                         }
                         // console.log('相同時不更新', rest, v)
 
+                        return rest
                     }
-                    else {
-                        //不相同時須更新
 
-                        //mr
-                        let mr = mongoSql.sql({
-                            type: 'insert',
-                            table: cl,
-                            values: v,
-                        })
-                        // console.log('mr', mr)
-                        // console.log('mr.query', mr.query)
-                        // console.log('mr.values', mr.values)
-
-                        //添加conflict
-                        let conflict = genConflictSQL(v)
-
-                        //sql
-                        let sql = `${mr.query} ${conflict}`
-
-                        //save
-                        await client.query(sql, mr.values)
-                            .then(() => {
-
-                                //rest
-                                rest = {
-                                    n: 1,
-                                    nModified: 1,
-                                    ok: 1,
-                                }
-                                // console.log('不相同時須更新', rest, vt)
-
-                            })
-                            .catch((err) => {
-
-                                //rest
-                                rest = {
-                                    n: 1,
-                                    nModified: 0,
-                                    ok: 0,
-                                    err: err.message,
-                                }
-
-                            })
-
-                    }
                 }
                 else {
-                    //不存在
 
-                    //rest
-                    rest = {
-                        n: 0,
-                        nModified: 0,
-                        ok: 1,
+                    //check
+                    if (!autoInsert) {
+                        //不存在且未開啟autoInsert則不寫入
+
+                        //rest
+                        rest = {
+                            n: 0,
+                            nModified: 0,
+                            ok: 1,
+                        }
+                        // console.log('不存在', rest, v)
+
+                        return rest
                     }
-                    // console.log('不存在', rest, v)
 
                 }
 
-                //autoInsert
-                if (autoInsert && rest.n === 0) {
-                    //之前不存在(rest.n)且可自動插入(autoInsert=true)
+                //check
+                if (autoInsert) {
+                    //由PostgreSQL於單一語句內原子完成[查找time]與[插入或更新],
+                    //併發時不會因他方已先插入同一time而報錯, 亦不會有兩方各自讀到同一舊值再各自寫入
 
                     //mr
                     let mr = mongoSql.sql({
@@ -685,17 +766,60 @@ function WOrmPostgresql(opt = {}) {
                     // console.log('mr.query', mr.query)
                     // console.log('mr.values', mr.values)
 
-                    //save
-                    await client.query(mr.query, mr.values)
-                        .then(() => {
+                    //添加conflict, 僅有time欄位時genConflictSQL無可更新欄位而回傳空字串,
+                    //此時退回DO NOTHING, 以免併發插入同一time者報錯
+                    let conflict = genConflictSQL(v)
+                    if (!isestr(conflict)) {
+                        conflict = 'ON CONFLICT (time) DO NOTHING'
+                    }
 
-                            //rest
-                            rest = {
-                                n: 1,
-                                nInserted: 1,
-                                ok: 1,
+                    //sql, xmax為0表該列由本語句插入, 非0表係由DO UPDATE更新而來,
+                    //衝突且落入DO NOTHING時不回傳任何列, 代表該time已存在且未變更
+                    let sql = `${mr.query} ${conflict} RETURNING (xmax = 0) AS inserted`
+
+                    //save
+                    await client.query(sql, mr.values)
+                        .then((r) => {
+
+                            //rows
+                            let rows = get(r, 'rows')
+
+                            //check
+                            if (!isearr(rows)) {
+                                //衝突且未更新
+
+                                //rest
+                                rest = {
+                                    n: 1,
+                                    nModified: 0,
+                                    ok: 1,
+                                }
+
                             }
-                            // console.log('之前不存在且可自動插入', rest, v)
+                            else if (get(rows, '0.inserted') === true) {
+                                //原不存在而插入, 回傳形狀同insert
+
+                                //rest
+                                rest = {
+                                    n: 1,
+                                    nInserted: 1,
+                                    ok: 1,
+                                }
+                                // console.log('之前不存在且可自動插入', rest, v)
+
+                            }
+                            else {
+                                //原已存在而更新
+
+                                //rest
+                                rest = {
+                                    n: 1,
+                                    nModified: 1,
+                                    ok: 1,
+                                }
+                                // console.log('不相同時須更新', rest, v)
+
+                            }
 
                         })
                         .catch((err) => {
@@ -704,6 +828,66 @@ function WOrmPostgresql(opt = {}) {
                             rest = {
                                 n: 1,
                                 nInserted: 0,
+                                ok: 0,
+                                err: err.message,
+                            }
+
+                        })
+
+                }
+                else {
+                    //未開啟autoInsert則僅能更新既有數據, 不可用INSERT以免無中生有,
+                    //由UPDATE...WHERE time原子完成[查找time]與[更新], 併發時不會遺失更新
+
+                    //mr
+                    let mr = mongoSql.sql({
+                        type: 'update',
+                        table: cl,
+                        updates: omit(v, 'time'),
+                        where: {
+                            time: v.time,
+                        },
+                    })
+                    // console.log('mr', mr)
+                    // console.log('mr.query', mr.query)
+                    // console.log('mr.values', mr.values)
+
+                    //save
+                    await client.query(mr.query, mr.values)
+                        .then((r) => {
+
+                            //check
+                            if (r.rowCount > 0) {
+                                //已更新
+
+                                //rest
+                                rest = {
+                                    n: 1,
+                                    nModified: 1,
+                                    ok: 1,
+                                }
+                                // console.log('不相同時須更新', rest, v)
+
+                            }
+                            else {
+                                //預讀後至更新前已被他人刪除, 視為不存在
+
+                                //rest
+                                rest = {
+                                    n: 0,
+                                    nModified: 0,
+                                    ok: 1,
+                                }
+
+                            }
+
+                        })
+                        .catch((err) => {
+
+                            //rest
+                            rest = {
+                                n: 1,
+                                nModified: 0,
                                 ok: 0,
                                 err: err.message,
                             }
@@ -996,6 +1180,7 @@ function WOrmPostgresql(opt = {}) {
     //save
     ee.createTable = createTable
     ee.select = select
+    ee.selectByTime = selectByTime
     ee.insert = insert
     ee.save = save
     ee.del = del

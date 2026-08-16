@@ -24,6 +24,7 @@ npm i w-orm-postgresql
 import WOrm from './src/WOrmPostgresql.mjs'
 //import WOrm from './dist/w-orm-postgresql.umd.js'
 
+
 let opt = {
     url: 'postgresql://username:password@127.0.0.1:5432',
     db: 'worm',
@@ -190,6 +191,14 @@ async function test() {
     let so = await wo.select({ name: 'rosemary' })
     console.log('select by name', so)
 
+    //selectByTime
+    let sb = await wo.selectByTime('2025-01-01T00:10:00Z')
+    console.log('selectByTime', sb)
+
+    //selectByTime by time not existed
+    let sbn = await wo.selectByTime('2024-01-01T00:00:00Z')
+    console.log('selectByTime by time not existed', sbn)
+
     //select by $and, $gt, $lt
     let spa = await wo.select({ '$and': [{ value: { '$gt': 123 } }, { value: { '$lt': 200 } }] })
     console.log('select by $and, $gt, $lt', spa)
@@ -309,7 +318,7 @@ async function test() {
 }
 test()
 // change delAll
-// delAll then { n: 5, nDeleted: 5, ok: 1 }
+// delAll then { n: 0, nDeleted: 0, ok: 1 }
 // change insert
 // insert then { n: 13, nInserted: 13, ok: 1 }
 // change save
@@ -348,6 +357,12 @@ test()
 //   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },
 //   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 }
 // ]
+// selectByTime {
+//   time: 2025-01-01T00:10:00.000Z,
+//   name: 'rosemary(modify)',
+//   value: 113.98
+// }
+// selectByTime by time not existed null
 // select by $and, $gt, $lt [
 //   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
 //   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },

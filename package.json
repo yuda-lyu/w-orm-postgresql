@@ -1,10 +1,10 @@
 {
   "name": "w-orm-postgresql",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "main": "dist/w-orm-postgresql.umd.js",
   "dependencies": {
     "mongo-sql": "^6.2.0",
-    "pg": "^8.20.0",
+    "pg": "^8.23.0",
     "wsemi": "^1.8.70"
   },
   "devDependencies": {

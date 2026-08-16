@@ -1,5 +1,132 @@
 import assert from 'assert'
+import net from 'net'
+import pg from 'pg'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import WOrm from '../src/WOrmPostgresql.mjs'
+
+
+//測試自行創建docker容器供PostgreSQL服務, 測試結束即銷毀, 故僅需環境已安裝docker
+
+
+let execFileAsync = promisify(execFile)
+
+let ctName = 'worm-test-postgresql'
+let ctImage = 'postgres:17-alpine'
+let ctUser = 'username'
+let ctPassword = 'password'
+let ctDb = 'worm'
+let ctPort = null //容器對外埠, 由getFreePort動態取得, 避免與既有PostgreSQL服務搶5432
+
+
+let delay = (ms) => {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms)
+    })
+}
+
+//getFreePort, 由系統配發空閒埠
+let getFreePort = () => {
+    return new Promise((resolve, reject) => {
+        let srv = net.createServer()
+        srv.on('error', reject)
+        srv.listen(0, () => {
+            let port = srv.address().port
+            srv.close(() => {
+                resolve(port)
+            })
+        })
+    })
+}
+
+//docker, 以陣列傳參不經shell, 避免路徑與引號轉譯問題
+let docker = (args) => {
+    return execFileAsync('docker', args)
+}
+
+//genUrl
+let genUrl = () => {
+    return `postgresql://${ctUser}:${ctPassword}@127.0.0.1:${ctPort}`
+}
+
+//genOpt
+let genOpt = (cl = 'users', useCache = false) => {
+    return {
+        url: genUrl(),
+        db: ctDb,
+        cl,
+        useCache,
+    }
+}
+
+//probeReady, 以pg直連容器對外埠試跑SELECT 1
+//不使用容器內pg_isready, 因postgres映像初始化期間會先啟動僅監聽unix socket之臨時服務,
+//pg_isready預設亦走unix socket故會提早回報就緒, 直連TCP方為測試實際所走路徑
+let probeReady = async () => {
+    let client = new pg.Client({ connectionString: `${genUrl()}/${ctDb}` })
+    let ok = false
+    try {
+        await client.connect()
+        await client.query('SELECT 1')
+        ok = true
+    }
+    catch (err) {
+        ok = false
+    }
+    finally {
+        await client.end().catch(() => {})
+    }
+    return ok
+}
+
+//startContainer, 創建容器並等待服務就緒
+//postgres映像以POSTGRES_USER、POSTGRES_PASSWORD、POSTGRES_DB即建妥帳號與資料庫, 無須另跑建置語句
+let startContainer = async () => {
+
+    //check docker
+    await docker(['version', '--format', '{{.Server.Version}}'])
+        .catch(() => {
+            throw new Error('需先安裝並啟動docker才能執行postgresql測試')
+        })
+
+    //清除前次殘留容器
+    await docker(['rm', '-f', ctName]).catch(() => {})
+
+    //run
+    ctPort = await getFreePort()
+    await docker(['run', '-d', '--rm', '--name', ctName, '-e', `POSTGRES_USER=${ctUser}`, '-e', `POSTGRES_PASSWORD=${ctPassword}`, '-e', `POSTGRES_DB=${ctDb}`, '-p', `${ctPort}:5432`, ctImage])
+
+    //等待服務就緒, 首次需拉取映像故給予較長時間
+    let ready = false
+    for (let i = 0; i < 90; i++) {
+        let ok = await probeReady()
+        if (ok) {
+            ready = true
+            break
+        }
+        await delay(2000)
+    }
+    if (!ready) {
+        throw new Error('postgresql容器啟動逾時')
+    }
+
+}
+
+//stopContainer, 銷毀容器
+let stopContainer = async () => {
+    await docker(['rm', '-f', ctName]).catch(() => {})
+}
+
+
+before(async function() {
+    this.timeout(600000) //含拉取映像與服務啟動
+    await startContainer()
+})
+
+after(async function() {
+    this.timeout(120000)
+    await stopContainer()
+})
 
 
 describe('basic', function() {
@@ -9,27 +136,7 @@ describe('basic', function() {
 
     before(async function () {
 
-        let opt = {
-            url: 'postgresql://username:password@127.0.0.1:5432',
-            db: 'worm',
-            cl: 'users',
-        }
-
-        //probe, 偵測postgres是否可用, 不可用則skip全部測試
-        //pg預設無connect timeout, 連不到時會等到OS socket timeout (~75s), 故用Promise.race包3s timeout
-        try {
-            let probe = WOrm(opt)
-            await Promise.race([
-                probe.select(),
-                new Promise((_resolve, reject) => setTimeout(() => reject(new Error('probe timeout')), 3000)),
-            ])
-        }
-        catch (err) {
-            let msg = err && err.message ? err.message : err
-            console.log(`PostgreSQL unavailable, skip tests: ${msg}`)
-            this.skip()
-            return
-        }
+        let opt = genOpt('users')
 
         let rs = [
             {
@@ -263,6 +370,51 @@ describe('basic', function() {
                 rt = msg.toString()
             })
         vget[6] = rt
+
+        //selectByTime
+        rt = null
+        // vans[18] = { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 }
+        await wo.selectByTime('2025-01-01T00:10:00Z')
+            .then(function(msg) {
+                // console.log('selectByTime then', msg)
+                // selectByTime { time: 2025-01-01T00:10:00.000Z, name: 'rosemary(modify)', value: 113.98 }
+                rt = msg
+            })
+            .catch(function(msg) {
+                // console.log('selectByTime catch', msg)
+                rt = msg.toString()
+            })
+        vget[18] = rt
+
+        //selectByTime by time not existed
+        rt = null
+        // vans[19] = null
+        await wo.selectByTime('2024-01-01T00:00:00Z')
+            .then(function(msg) {
+                // console.log('selectByTime by time not existed then', msg)
+                // selectByTime by time not existed null
+                rt = msg
+            })
+            .catch(function(msg) {
+                // console.log('selectByTime by time not existed catch', msg)
+                rt = msg.toString()
+            })
+        vget[19] = rt
+
+        //selectByTime by time invalid, 未給有效主鍵值視為查無數據
+        rt = null
+        // vans[20] = null
+        await wo.selectByTime('abc')
+            .then(function(msg) {
+                // console.log('selectByTime by time invalid then', msg)
+                // selectByTime by time invalid null
+                rt = msg
+            })
+            .catch(function(msg) {
+                // console.log('selectByTime by time invalid catch', msg)
+                rt = msg.toString()
+            })
+        vget[20] = rt
 
         //select by $and, $gt, $lt
         rt = null
@@ -520,6 +672,34 @@ describe('basic', function() {
             })
         vget[17] = rt
 
+        //selectByTime (1st time, 從DB讀取並填入快取)
+        rt = null
+        // vans[21] = { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary(modify)', value: 654.321 }
+        await woc.selectByTime('2025-01-01T00:01:00Z')
+            .then(function(msg) {
+                // console.log('selectByTime 1st then', msg)
+                rt = msg
+            })
+            .catch(function(msg) {
+                // console.log('selectByTime 1st catch', msg)
+                rt = msg.toString()
+            })
+        vget[21] = rt
+
+        //selectByTime (2nd time, 命中快取, 內容須與第一次相同)
+        rt = null
+        // vans[22] = vans[21]
+        await woc.selectByTime('2025-01-01T00:01:00Z')
+            .then(function(msg) {
+                // console.log('selectByTime 2nd then', msg)
+                rt = msg
+            })
+            .catch(function(msg) {
+                // console.log('selectByTime 2nd catch', msg)
+                rt = msg.toString()
+            })
+        vget[22] = rt
+
     })
 
     vans[1] = { ok: 1 }
@@ -574,6 +754,22 @@ describe('basic', function() {
     ]
     it(`should get ${JSON.stringify(vans[6])} for select by name`, async function() {
         assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    //vans[18]~vans[22]為後續新增之selectByTime, 為不更動既有編號故接續於末號之後
+    vans[18] = { time: new Date('2025-01-01T00:10:00.000Z'), name: 'rosemary(modify)', value: 113.98 }
+    it(`should get ${JSON.stringify(vans[18])} for selectByTime`, async function() {
+        assert.strict.deepStrictEqual(vget[18], vans[18])
+    })
+
+    vans[19] = null
+    it(`should get ${JSON.stringify(vans[19])} for selectByTime by time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[19], vans[19])
+    })
+
+    vans[20] = null
+    it(`should get ${JSON.stringify(vans[20])} for selectByTime by time invalid`, async function() {
+        assert.strict.deepStrictEqual(vget[20], vans[20])
     })
 
     vans[7] = [
@@ -676,6 +872,252 @@ describe('basic', function() {
     ]
     it(`should get ${JSON.stringify(vans[17])} for select all (3rd, reload after save)`, async function() {
         assert.strict.deepStrictEqual(vget[17], vans[17])
+    })
+
+    vans[21] = { time: new Date('2025-01-01T00:01:00.000Z'), name: 'rosemary(modify)', value: 654.321 }
+    it(`should get ${JSON.stringify(vans[21])} for selectByTime (1st, fill cache)`, async function() {
+        assert.strict.deepStrictEqual(vget[21], vans[21])
+    })
+
+    vans[22] = vans[21]
+    it(`should get ${JSON.stringify(vans[22])} for selectByTime (2nd, cache hit)`, async function() {
+        assert.strict.deepStrictEqual(vget[22], vans[22])
+    })
+
+})
+
+
+//insert與save之併發測試, 因各操作皆各自new PgClient另開連線, 原子性全由PostgreSQL提供,
+//故同行程以Promise.all併發即等價於跨行程併發, 不須另起行程
+
+
+describe('insert nInserted', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(120000)
+
+        //wo
+        let cl = 'insertcnt'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, 'time', {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //全新3筆
+        vget[1] = await wo.insert([
+            { time: '2025-02-01T00:00:00Z', name: 'peter', value: 1 },
+            { time: '2025-02-01T00:01:00Z', name: 'rosemary', value: 2 },
+            { time: '2025-02-01T00:02:00Z', name: 'kettle', value: 3 },
+        ])
+
+        //重複插入同3筆, 全數已存在故皆不插入
+        vget[2] = await wo.insert([
+            { time: '2025-02-01T00:00:00Z', name: 'peter', value: 1 },
+            { time: '2025-02-01T00:01:00Z', name: 'rosemary', value: 2 },
+            { time: '2025-02-01T00:02:00Z', name: 'kettle', value: 3 },
+        ])
+
+        //部份重複, 1筆已存在2筆為新
+        vget[3] = await wo.insert([
+            { time: '2025-02-01T00:01:00Z', name: 'rosemary', value: 2 },
+            { time: '2025-02-01T00:03:00Z', name: 'sandler', value: 4 },
+            { time: '2025-02-01T00:04:00Z', name: 'joyce', value: 5 },
+        ])
+
+        //同批含重複time, 僅首筆成功
+        vget[4] = await wo.insert([
+            { time: '2025-02-01T00:05:00Z', name: 'dup-1', value: 6 },
+            { time: '2025-02-01T00:05:00Z', name: 'dup-2', value: 7 },
+            { time: '2025-02-01T00:06:00Z', name: 'uniq', value: 8 },
+        ])
+
+        //併發對同一time插入10次, nInserted總和須為1
+        let rs = await Promise.all(Array.from({ length: 10 }, (v, k) => {
+            return wo.insert({ time: '2025-02-01T00:07:00Z', name: `race-${k}`, value: k })
+        }))
+        vget[5] = rs.reduce((sum, v) => sum + v.nInserted, 0)
+
+        //併發皆不得報錯
+        vget[6] = rs.filter((v) => v.ok !== 1).length
+
+        //最終筆數, 3+0+2+2+1=8
+        let ss = await wo.select()
+        vget[7] = ss.length
+
+        //同批重複者僅首筆入庫
+        let vdup = await wo.selectByTime('2025-02-01T00:05:00Z')
+        vget[8] = vdup.name
+
+    })
+
+    vans[1] = { n: 3, nInserted: 3, ok: 1 }
+    it(`should get ${JSON.stringify(vans[1])} for insert 3 new records`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = { n: 3, nInserted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[2])} for insert 3 existed records`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = { n: 3, nInserted: 2, ok: 1 }
+    it(`should get ${JSON.stringify(vans[3])} for insert 1 existed and 2 new records`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = { n: 3, nInserted: 2, ok: 1 }
+    it(`should get ${JSON.stringify(vans[4])} for insert with duplicated time in same batch`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = 1
+    it(`should get ${JSON.stringify(vans[5])} for sum of nInserted by 10 concurrent insert with same time`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = 0
+    it(`should get ${JSON.stringify(vans[6])} for count of ok!==1 in 10 concurrent insert`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = 8
+    it(`should get ${JSON.stringify(vans[7])} for records after all insert`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = 'dup-1'
+    it(`should get ${JSON.stringify(vans[8])} for keeping first one of duplicated time in same batch`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+})
+
+
+describe('save concurrency', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(120000)
+
+        //wo
+        let cl = 'saverace'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, 'time', {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //併發save對既有time之不同欄位, 各欄位皆須保留
+        let tMerge = '2025-03-01T00:00:00Z'
+        await wo.insert({ time: tMerge, name: 'origin', value: 1 })
+        await Promise.all([
+            wo.save({ time: tMerge, name: 'merge-name' }),
+            wo.save({ time: tMerge, value: 99 }),
+        ])
+        vget[1] = await wo.selectByTime(tMerge)
+
+        //併發save對全新time, autoInsert僅一次且不得報錯
+        let tNew = '2025-03-01T00:01:00Z'
+        let rsn = await Promise.all(Array.from({ length: 5 }, (v, k) => {
+            return wo.save({ time: tNew, name: `new-${k}` })
+        }))
+        vget[2] = rsn.filter((v) => v[0].nInserted === 1).length
+        vget[3] = rsn.filter((v) => v[0].ok !== 1).length
+        vget[4] = (await wo.select({ time: tNew })).length
+
+        //save內容相同不更新
+        let tSame = '2025-03-01T00:02:00Z'
+        await wo.insert({ time: tSame, name: 'same', value: 5 })
+        vget[5] = await wo.save({ time: tSame, name: 'same', value: 5 })
+
+        //save內容不同須更新, 未給之欄位須保留
+        let tDiff = '2025-03-01T00:03:00Z'
+        await wo.insert({ time: tDiff, name: 'diff', value: 5 })
+        vget[6] = await wo.save({ time: tDiff, value: 6 })
+        vget[7] = await wo.selectByTime(tDiff)
+
+        //save(autoInsert=false)對不存在之time不得插入
+        let tNone = '2025-03-01T00:04:00Z'
+        vget[8] = await wo.save({ time: tNone, name: 'none' }, { autoInsert: false })
+        vget[9] = await wo.selectByTime(tNone)
+
+        //併發save(autoInsert=false)對既有time之不同欄位, 各欄位皆須保留且不得報錯
+        let tUpd = '2025-03-01T00:05:00Z'
+        await wo.insert({ time: tUpd, name: 'origin', value: 1 })
+        let rsu = await Promise.all([
+            wo.save({ time: tUpd, name: 'upd-name' }, { autoInsert: false }),
+            wo.save({ time: tUpd, value: 88 }, { autoInsert: false }),
+        ])
+        vget[10] = rsu.filter((v) => v[0].ok !== 1).length
+        vget[11] = await wo.selectByTime(tUpd)
+
+    })
+
+    vans[1] = { time: new Date('2025-03-01T00:00:00.000Z'), name: 'merge-name', value: 99 }
+    it(`should get ${JSON.stringify(vans[1])} for fields after 2 concurrent save with different field`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = 1
+    it(`should get ${JSON.stringify(vans[2])} for count of nInserted===1 in 5 concurrent save with time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = 0
+    it(`should get ${JSON.stringify(vans[3])} for count of ok!==1 in 5 concurrent save with time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = 1
+    it(`should get ${JSON.stringify(vans[4])} for records after 5 concurrent save with time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = [{ n: 1, nModified: 0, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[5])} for save with same content`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = [{ n: 1, nModified: 1, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[6])} for save with different content`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = { time: new Date('2025-03-01T00:03:00.000Z'), name: 'diff', value: 6 }
+    it(`should get ${JSON.stringify(vans[7])} for keeping field not given in save`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = [{ n: 0, nModified: 0, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[8])} for save(autoInsert=false) with time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = null
+    it(`should get ${JSON.stringify(vans[9])} for record after save(autoInsert=false) with time not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = 0
+    it(`should get ${JSON.stringify(vans[10])} for count of ok!==1 in 2 concurrent save(autoInsert=false)`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = { time: new Date('2025-03-01T00:05:00.000Z'), name: 'upd-name', value: 88 }
+    it(`should get ${JSON.stringify(vans[11])} for fields after 2 concurrent save(autoInsert=false) with different field`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
     })
 
 })
