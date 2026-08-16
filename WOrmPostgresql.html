@@ -672,13 +672,17 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>刪除數據</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>刪除數據</p>
+<p>回傳陣列恆與輸入等長，各筆之n與nDeleted皆為主鍵命中筆數，值為0或1，未命中為0且屬正常結果。
+判斷某筆是否真的被刪除一律以nDeleted為準。
+未帶有效time者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
+以此與[主鍵未命中]之ok:1區辨。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line942">line 942</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line977">line 977</a>
     </li></ul></dd>
     
 
@@ -796,7 +800,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳刪除結果陣列[{n,nDeleted,ok}]，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -833,13 +837,15 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表</p>
+<p>n與nDeleted皆為實際刪除筆數，不取全表筆數。find未給或為空物件時刪除全部數據，
+條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1079">line 1079</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1127">line 1127</a>
     </li></ul></dd>
     
 
@@ -974,7 +980,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳刪除結果物件{n,nDeleted,ok}，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1011,13 +1017,16 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>插入數據</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵time不存在時寫入，已存在者跳過且不覆寫</p>
+<p>n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
+不視為錯誤。同批含重複time時僅首筆計入nInserted。
+因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line489">line 489</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line497">line 497</a>
     </li></ul></dd>
     
 
@@ -1135,7 +1144,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳插入結果，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳插入結果物件{n,nInserted,ok}，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1172,13 +1181,20 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>儲存數據</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>儲存數據，以主鍵time為準更新既有數據，未給之欄位保留</p>
+<p>回傳陣列恆與輸入等長，輸入單一物件亦回傳長度1之陣列。
+各筆之n為主鍵命中筆數，值為0或1，命中(不論內容有無變更)或經插入而產生皆為1；
+nInserted與nModified恆同時出現，無對應行為時填0。
+[內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
+故只給部份欄位且該些欄位值皆與現值相同時，合併結果等於現值，nModified為0，
+令nModified忠實反映資料庫端是否真的寫入。
+因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line618">line 618</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line634">line 634</a>
     </li></ul></dd>
     
 
@@ -1422,7 +1438,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳儲存結果，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳儲存結果陣列[{n,nInserted,nModified,ok}]，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1677,13 +1693,16 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳</p>
+<p>函數名依主鍵欄位命名為selectByTime而不另掛selectById別名，因本套件之主鍵為具業務語義之time，
+與以無語義識別碼為主鍵者性質不同，該差異須由呼叫端知悉而非由別名掩蓋。
+主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line377">line 377</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line381">line 381</a>
     </li></ul></dd>
     
 
@@ -1843,7 +1862,7 @@
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Aug 16 2026 17:59:38 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Aug 16 2026 22:57:35 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
