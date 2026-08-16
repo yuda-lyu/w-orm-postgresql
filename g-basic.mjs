@@ -300,11 +300,11 @@ test()
 // insert then { n: 13, nInserted: 13, ok: 1 }
 // change save
 // save then [
-//   { n: 1, nModified: 0, ok: 1 },
-//   { n: 1, nModified: 1, ok: 1 },
-//   { n: 1, nModified: 1, ok: 1 },
-//   { n: 1, nModified: 1, ok: 1 },
-//   { n: 0, nModified: 0, ok: 1 }
+//   { n: 1, nInserted: 0, nModified: 0, ok: 1 },
+//   { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+//   { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+//   { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+//   { n: 0, nInserted: 0, nModified: 0, ok: 1 }
 // ]
 // select all [
 //   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
@@ -370,9 +370,9 @@ test()
 //   }
 // ]
 // change save
-// save then [ { n: 1, nInserted: 1, ok: 1 } ]
+// save then [ { n: 1, nInserted: 1, nModified: 0, ok: 1 } ]
 // change del
-// del then [ { n: 1, nDeleted: 0, ok: 1 } ]
+// del then [ { n: 0, nDeleted: 0, ok: 1 } ]
 // change del
 // del then [
 //   { n: 1, nDeleted: 1, ok: 1 },
@@ -407,7 +407,7 @@ test()
 //   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
 //   { time: 2025-01-01T00:02:00.000Z, name: 'kettle', value: 456 }
 // ]
-// save (invalidate cache) then [ { n: 1, nModified: 1, ok: 1 } ]
+// save (invalidate cache) then [ { n: 1, nInserted: 0, nModified: 1, ok: 1 } ]
 // select all 3rd (reload after save) [
 //   { time: 2025-01-01T00:00:00.000Z, name: 'peter', value: 123 },
 //   {

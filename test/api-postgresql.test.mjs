@@ -1,8 +1,10 @@
 import assert from 'assert'
 import net from 'net'
+import path from 'path'
 import pg from 'pg'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
+import isestr from 'wsemi/src/isestr.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
 
 
@@ -713,11 +715,11 @@ describe('basic', function() {
     })
 
     vans[3] = [
-        { n: 1, nModified: 0, ok: 1 },
-        { n: 1, nModified: 1, ok: 1 },
-        { n: 1, nModified: 1, ok: 1 },
-        { n: 1, nModified: 1, ok: 1 },
-        { n: 0, nModified: 0, ok: 1 }
+        { n: 1, nInserted: 0, nModified: 0, ok: 1 },
+        { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+        { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+        { n: 1, nInserted: 0, nModified: 1, ok: 1 },
+        { n: 0, nInserted: 0, nModified: 0, ok: 1 }
     ]
     it(`should get ${JSON.stringify(vans[3])} for save(autoInsert=false)`, async function() {
         assert.strict.deepStrictEqual(vget[3], vans[3])
@@ -810,12 +812,12 @@ describe('basic', function() {
     //     assert.strict.deepStrictEqual(vget[14], vans[14])
     // })
 
-    vans[10] = [{ n: 1, nInserted: 1, ok: 1 }]
+    vans[10] = [{ n: 1, nInserted: 1, nModified: 0, ok: 1 }]
     it(`should get ${JSON.stringify(vans[10])} for save(autoInsert=true)`, async function() {
         assert.strict.deepStrictEqual(vget[10], vans[10])
     })
 
-    vans[11] = [{ n: 1, nDeleted: 0, ok: 1 }]
+    vans[11] = [{ n: 0, nDeleted: 0, ok: 1 }]
     it(`should get ${JSON.stringify(vans[11])} for del`, async function() {
         assert.strict.deepStrictEqual(vget[11], vans[11])
     })
@@ -860,7 +862,7 @@ describe('basic', function() {
         assert.strict.deepStrictEqual(vget[15], vans[15])
     })
 
-    vans[16] = [{ n: 1, nModified: 1, ok: 1 }]
+    vans[16] = [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }]
     it(`should get ${JSON.stringify(vans[16])} for save (invalidate cache)`, async function() {
         assert.strict.deepStrictEqual(vget[16], vans[16])
     })
@@ -1085,12 +1087,12 @@ describe('save concurrency', function() {
         assert.strict.deepStrictEqual(vget[4], vans[4])
     })
 
-    vans[5] = [{ n: 1, nModified: 0, ok: 1 }]
+    vans[5] = [{ n: 1, nInserted: 0, nModified: 0, ok: 1 }]
     it(`should get ${JSON.stringify(vans[5])} for save with same content`, async function() {
         assert.strict.deepStrictEqual(vget[5], vans[5])
     })
 
-    vans[6] = [{ n: 1, nModified: 1, ok: 1 }]
+    vans[6] = [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }]
     it(`should get ${JSON.stringify(vans[6])} for save with different content`, async function() {
         assert.strict.deepStrictEqual(vget[6], vans[6])
     })
@@ -1100,7 +1102,7 @@ describe('save concurrency', function() {
         assert.strict.deepStrictEqual(vget[7], vans[7])
     })
 
-    vans[8] = [{ n: 0, nModified: 0, ok: 1 }]
+    vans[8] = [{ n: 0, nInserted: 0, nModified: 0, ok: 1 }]
     it(`should get ${JSON.stringify(vans[8])} for save(autoInsert=false) with time not existed`, async function() {
         assert.strict.deepStrictEqual(vget[8], vans[8])
     })
@@ -1118,6 +1120,339 @@ describe('save concurrency', function() {
     vans[11] = { time: new Date('2025-03-01T00:05:00.000Z'), name: 'upd-name', value: 88 }
     it(`should get ${JSON.stringify(vans[11])} for fields after 2 concurrent save(autoInsert=false) with different field`, async function() {
         assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+})
+
+
+describe('spec compliance', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(120000)
+
+        //wo
+        let cl = 'specok'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, 'time', {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //save只給部份欄位且值皆與現值相同, 合併後等於現值故不寫入
+        let tPart = '2025-04-01T00:00:00Z'
+        await wo.insert({ time: tPart, name: 'peter', value: 5 })
+        vget[1] = await wo.save({ time: tPart, value: 5 })
+        vget[2] = await wo.selectByTime(tPart)
+
+        //save單筆失敗不中斷整批, 失敗筆須帶err
+        let tOk = '2025-04-01T00:01:00Z'
+        let tBad = '2025-04-01T00:02:00Z'
+        let rsf = await wo.save([
+            { time: tOk, name: 'ok' },
+            { time: tBad, notexistcol: 1 },
+        ])
+        vget[3] = rsf.length
+        vget[4] = rsf[0]
+        vget[5] = {
+            n: rsf[1].n,
+            nInserted: rsf[1].nInserted,
+            nModified: rsf[1].nModified,
+            ok: rsf[1].ok,
+            hasErr: isestr(rsf[1].err),
+        }
+
+        //del未帶有效主鍵者回ok:0且不中斷整批
+        let tDel = '2025-04-01T00:03:00Z'
+        await wo.insert({ time: tDel, name: 'todel' })
+        let rsd = await wo.del([
+            { time: tDel },
+            { name: 'no-time' },
+        ])
+        vget[6] = rsd.length
+        vget[7] = rsd[0]
+        vget[8] = {
+            n: rsd[1].n,
+            nDeleted: rsd[1].nDeleted,
+            ok: rsd[1].ok,
+            hasErr: isestr(rsd[1].err),
+        }
+
+        //T6例外, insert與save未帶有效time時不補值而reject
+        vget[9] = await wo.insert({ name: 'no-time' })
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+        vget[10] = await wo.save({ name: 'no-time' })
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+
+        //T5輸入無效
+        vget[11] = await wo.insert(null)
+        vget[12] = await wo.save(null)
+        vget[13] = await wo.del(null)
+
+        //delAll帶條件且僅部份命中
+        let clPart = 'specdelall'
+        let woPart = WOrm(genOpt(clPart))
+        await woPart.createTable(clPart, 'time', {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await woPart.delAll()
+        await woPart.insert([
+            { time: '2025-05-01T00:00:00Z', name: 'aa', value: 1 },
+            { time: '2025-05-01T00:01:00Z', name: 'aa', value: 2 },
+            { time: '2025-05-01T00:02:00Z', name: 'bb', value: 3 },
+            { time: '2025-05-01T00:03:00Z', name: 'bb', value: 4 },
+        ])
+        vget[16] = await woPart.delAll({ name: 'aa' })
+        vget[17] = (await woPart.select()).length
+
+        //delAll條件無命中
+        vget[18] = await woPart.delAll({ name: 'notexist' })
+
+    })
+
+    vans[1] = [{ n: 1, nInserted: 0, nModified: 0, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[1])} for save with partial fields all equal to current`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = { time: new Date('2025-04-01T00:00:00.000Z'), name: 'peter', value: 5 }
+    it(`should get ${JSON.stringify(vans[2])} for record unchanged after save with partial fields`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = 2
+    it(`should get ${JSON.stringify(vans[3])} for length of save result with 1 failed record`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = { n: 1, nInserted: 1, nModified: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[4])} for succeeded record in save with 1 failed record`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = { n: 1, nInserted: 0, nModified: 0, ok: 0, hasErr: true }
+    it(`should get ${JSON.stringify(vans[5])} for failed record in save`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = 2
+    it(`should get ${JSON.stringify(vans[6])} for length of del result with 1 invalid time`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = { n: 1, nDeleted: 1, ok: 1 }
+    it(`should get ${JSON.stringify(vans[7])} for succeeded record in del with 1 invalid time`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = { n: 0, nDeleted: 0, ok: 0, hasErr: true }
+    it(`should get ${JSON.stringify(vans[8])} for record without valid time in del`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = 'rejected'
+    it(`should get ${JSON.stringify(vans[9])} for insert without valid time`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = 'rejected'
+    it(`should get ${JSON.stringify(vans[10])} for save without valid time`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = { n: 0, nInserted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[11])} for insert with invalid data`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+    vans[12] = []
+    it(`should get ${JSON.stringify(vans[12])} for save with invalid data`, async function() {
+        assert.strict.deepStrictEqual(vget[12], vans[12])
+    })
+
+    vans[13] = []
+    it(`should get ${JSON.stringify(vans[13])} for del with invalid data`, async function() {
+        assert.strict.deepStrictEqual(vget[13], vans[13])
+    })
+
+    vans[16] = { n: 2, nDeleted: 2, ok: 1 }
+    it(`should get ${JSON.stringify(vans[16])} for delAll with find matched partially`, async function() {
+        assert.strict.deepStrictEqual(vget[16], vans[16])
+    })
+
+    vans[17] = 2
+    it(`should get ${JSON.stringify(vans[17])} for records after delAll with find matched partially`, async function() {
+        assert.strict.deepStrictEqual(vget[17], vans[17])
+    })
+
+    vans[18] = { n: 0, nDeleted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[18])} for delAll with find matched nothing`, async function() {
+        assert.strict.deepStrictEqual(vget[18], vans[18])
+    })
+
+})
+
+
+//runProc, 另起行程對同一資料表操作, 用於驗證跨行程之原子性
+//子行程以--input-type=module執行, 並以pathToFileURL轉換src路徑, 避免專案路徑含非ASCII字元而無法import
+function runProc(tag, opt, mode, payload) {
+    return new Promise(function(resolve) {
+        let code = `
+import { pathToFileURL } from 'url'
+let { default: WOrm } = await import(pathToFileURL(process.env.SRC).href)
+let wo = WOrm({ url: process.env.URL, db: process.env.DB, cl: process.env.CL })
+let payload = JSON.parse(process.env.PAYLOAD)
+let tag = process.env.TAG
+if (process.env.MODE === 'insert') {
+    let n = 0
+    for (let time of payload) {
+        let r = await wo.insert({ time, name: tag, value: 1 })
+        n += r.nInserted
+    }
+    console.log(JSON.stringify({ tag, nInserted: n }))
+}
+else {
+    let nInserted = 0
+    let nModified = 0
+    for (let f of payload.fields) {
+        let r = await wo.save({ time: payload.time, [f]: tag })
+        nInserted += r[0].nInserted
+        nModified += r[0].nModified
+    }
+    console.log(JSON.stringify({ tag, nInserted, nModified }))
+}
+`
+        let out = ''
+        let p = spawn(process.execPath, ['--input-type=module', '-e', code], {
+            shell: false,
+            env: {
+                ...process.env,
+                SRC: path.resolve('./src/WOrmPostgresql.mjs'),
+                URL: opt.url,
+                DB: opt.db,
+                CL: opt.cl,
+                MODE: mode,
+                PAYLOAD: JSON.stringify(payload),
+                TAG: tag,
+            },
+        })
+        p.stdout.on('data', function(d) {
+            out += d.toString()
+        })
+        p.stderr.on('data', function(d) {
+            out += d.toString()
+        })
+        p.on('close', function() {
+            let r = null
+            try {
+                r = JSON.parse(out.trim())
+            }
+            catch (err) {
+                r = { tag, error: out.trim() }
+            }
+            resolve(r)
+        })
+    })
+}
+
+
+describe('cross-process concurrency', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(300000)
+
+        //跨行程insert, 兩行程各自對相同20個time插入, nInserted總和須為20且資料表僅20筆
+        let clIns = 'xprocinsert'
+        let optIns = genOpt(clIns)
+        let woIns = WOrm(optIns)
+        await woIns.createTable(clIns, 'time', {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await woIns.delAll()
+
+        let times = Array.from({ length: 20 }, (v, k) => {
+            return `2025-06-01T00:${`${k}`.padStart(2, '0')}:00Z`
+        })
+        let rps = await Promise.all([
+            runProc('p1', optIns, 'insert', times),
+            runProc('p2', optIns, 'insert', times),
+        ])
+        vget[1] = rps.filter((v) => v.error !== undefined).length
+        vget[2] = rps.reduce((sum, v) => sum + (v.nInserted || 0), 0)
+        vget[3] = (await woIns.select()).length
+
+        //跨行程save對同一time之不同欄位, 兩行程各寫5欄, 10欄須全數保留
+        let clSav = 'xprocsave'
+        let optSav = genOpt(clSav)
+        let woSav = WOrm(optSav)
+        let vSample = { time: '2000-01-01T00:00:00Z' }
+        Array.from({ length: 10 }, (v, k) => k).forEach((k) => {
+            vSample[`f${k}`] = 'abc'
+        })
+        await woSav.createTable(clSav, 'time', vSample).catch(() => {})
+        await woSav.delAll()
+
+        let tSav = '2025-06-02T00:00:00Z'
+        let rpss = await Promise.all([
+            runProc('p1', optSav, 'save', { time: tSav, fields: ['f0', 'f1', 'f2', 'f3', 'f4'] }),
+            runProc('p2', optSav, 'save', { time: tSav, fields: ['f5', 'f6', 'f7', 'f8', 'f9'] }),
+        ])
+        vget[4] = rpss.filter((v) => v.error !== undefined).length
+
+        //兩行程對同一新time各自save, 恰有一方之nInserted為1
+        vget[5] = rpss.reduce((sum, v) => sum + (v.nInserted || 0), 0)
+
+        //10欄須全數保留且值為各自行程之tag
+        let vSav = await woSav.selectByTime(tSav)
+        vget[6] = Array.from({ length: 10 }, (v, k) => k)
+            .filter((k) => {
+                let tag = k <= 4 ? 'p1' : 'p2'
+                return vSav[`f${k}`] === tag
+            }).length
+
+    })
+
+    vans[1] = 0
+    it(`should get ${JSON.stringify(vans[1])} for count of errored process in cross-process insert`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = 20
+    it(`should get ${JSON.stringify(vans[2])} for sum of nInserted by 2 processes inserting same 20 times`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = 20
+    it(`should get ${JSON.stringify(vans[3])} for records after cross-process insert`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = 0
+    it(`should get ${JSON.stringify(vans[4])} for count of errored process in cross-process save`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = 1
+    it(`should get ${JSON.stringify(vans[5])} for sum of nInserted by 2 processes saving same new time`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = 10
+    it(`should get ${JSON.stringify(vans[6])} for count of fields kept after cross-process save with different field`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
     })
 
 })

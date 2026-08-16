@@ -370,6 +370,10 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 由主鍵time查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
      *
+     * 函數名依主鍵欄位命名為selectByTime而不另掛selectById別名，因本套件之主鍵為具業務語義之time，
+     * 與以無語義識別碼為主鍵者性質不同，該差異須由呼叫端知悉而非由別名掩蓋。
+     * 主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
+     *
      * @memberOf WOrmPostgresql
      * @param {String|Date} time 輸入主鍵time值，本套件以time欄位為主鍵
      * @returns {Promise} 回傳Promise，resolve回傳數據物件，若無此time則回傳null，reject回傳錯誤訊息
@@ -480,11 +484,15 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 插入數據
+     * 插入數據，僅於主鍵time不存在時寫入，已存在者跳過且不覆寫
+     *
+     * n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
+     * 不視為錯誤。同批含重複time時僅首筆計入nInserted。
+     * 因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
-     * @returns {Promise} 回傳Promise，resolve回傳插入結果，reject回傳錯誤訊息
+     * @returns {Promise} 回傳Promise，resolve回傳插入結果物件{n,nInserted,ok}，reject回傳錯誤訊息
      */
     async function insert(data) {
         let isErr = false
@@ -607,13 +615,21 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 儲存數據
+     * 儲存數據，以主鍵time為準更新既有數據，未給之欄位保留
+     *
+     * 回傳陣列恆與輸入等長，輸入單一物件亦回傳長度1之陣列。
+     * 各筆之n為主鍵命中筆數，值為0或1，命中(不論內容有無變更)或經插入而產生皆為1；
+     * nInserted與nModified恆同時出現，無對應行為時填0。
+     * [內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
+     * 故只給部份欄位且該些欄位值皆與現值相同時，合併結果等於現值，nModified為0，
+     * 令nModified忠實反映資料庫端是否真的寫入。
+     * 因主鍵time承載觀測時間之業務意義，未帶有效time時不自動補值，一律以reject回報。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
      * @param {Object} [option={}] 輸入設定物件，預設為{}
      * @param {boolean} [option.autoInsert=true] 輸入是否於儲存時發現原本無數據，則自動改以插入處理，預設為true
-     * @returns {Promise} 回傳Promise，resolve回傳儲存結果，reject回傳錯誤訊息
+     * @returns {Promise} 回傳Promise，resolve回傳儲存結果陣列[{n,nInserted,nModified,ok}]，reject回傳錯誤訊息
      */
     async function save(data, option = {}) {
         let isErr = false
@@ -713,16 +729,22 @@ function WOrmPostgresql(opt = {}) {
                     let _vt = omit(_v, 'time')
                     // console.log('_vt', _vt)
 
-                    //vt
-                    let vt = omit(v, 'time')
+                    //vt, [內容相同]之判定基準為[待寫入物件合併進現值後與現值相同],
+                    //非[待寫入物件與現值全等], 故只給部份欄位且該些欄位值皆與現值相同時視為相同而不寫入,
+                    //合併採淺層覆蓋, 與後端以EXCLUDED整欄取代之寫入行為一致
+                    let vt = {
+                        ..._vt,
+                        ...omit(v, 'time'),
+                    }
                     // console.log('vt', vt)
 
-                    if (isEqual(_vt, vt)) {
+                    if (isEqual(vt, _vt)) {
                         //相同時不更新
 
                         //rest
                         rest = {
                             n: 1,
+                            nInserted: 0,
                             nModified: 0,
                             ok: 1,
                         }
@@ -741,6 +763,7 @@ function WOrmPostgresql(opt = {}) {
                         //rest
                         rest = {
                             n: 0,
+                            nInserted: 0,
                             nModified: 0,
                             ok: 1,
                         }
@@ -791,18 +814,20 @@ function WOrmPostgresql(opt = {}) {
                                 //rest
                                 rest = {
                                     n: 1,
+                                    nInserted: 0,
                                     nModified: 0,
                                     ok: 1,
                                 }
 
                             }
                             else if (get(rows, '0.inserted') === true) {
-                                //原不存在而插入, 回傳形狀同insert
+                                //原不存在而插入
 
                                 //rest
                                 rest = {
                                     n: 1,
                                     nInserted: 1,
+                                    nModified: 0,
                                     ok: 1,
                                 }
                                 // console.log('之前不存在且可自動插入', rest, v)
@@ -814,6 +839,7 @@ function WOrmPostgresql(opt = {}) {
                                 //rest
                                 rest = {
                                     n: 1,
+                                    nInserted: 0,
                                     nModified: 1,
                                     ok: 1,
                                 }
@@ -828,6 +854,7 @@ function WOrmPostgresql(opt = {}) {
                             rest = {
                                 n: 1,
                                 nInserted: 0,
+                                nModified: 0,
                                 ok: 0,
                                 err: err.message,
                             }
@@ -863,6 +890,7 @@ function WOrmPostgresql(opt = {}) {
                                 //rest
                                 rest = {
                                     n: 1,
+                                    nInserted: 0,
                                     nModified: 1,
                                     ok: 1,
                                 }
@@ -875,6 +903,7 @@ function WOrmPostgresql(opt = {}) {
                                 //rest
                                 rest = {
                                     n: 0,
+                                    nInserted: 0,
                                     nModified: 0,
                                     ok: 1,
                                 }
@@ -887,6 +916,7 @@ function WOrmPostgresql(opt = {}) {
                             //rest
                             rest = {
                                 n: 1,
+                                nInserted: 0,
                                 nModified: 0,
                                 ok: 0,
                                 err: err.message,
@@ -935,9 +965,14 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 刪除數據
      *
+     * 回傳陣列恆與輸入等長，各筆之n與nDeleted皆為主鍵命中筆數，值為0或1，未命中為0且屬正常結果。
+     * 判斷某筆是否真的被刪除一律以nDeleted為準。
+     * 未帶有效time者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
+     * 以此與[主鍵未命中]之ok:1區辨。
+     *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
-     * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
+     * @returns {Promise} 回傳Promise，resolve回傳刪除結果陣列[{n,nDeleted,ok}]，reject回傳錯誤訊息
      */
     async function del(data) {
         let isErr = false
@@ -983,39 +1018,49 @@ function WOrmPostgresql(opt = {}) {
                 data = [data]
             }
 
-            //check time
-            data = map(data, function(v, k) {
-                if (!isDate(v.time)) {
-                    throw new Error(`invalid data[${k}].time[${v.time}]`)
-                }
-                return v
-            })
-
             //pmSeries
             res = await pmSeries(data, async(v) => {
 
                 //rest
                 let rest = null
 
+                //time
+                let time = get(v, 'time')
+
+                //check time, 未帶有效主鍵者不補值亦不送查詢,
+                //因mongo-sql會將無效值轉為null而誤中其他數據, 故直接視為該筆無法處理
+                if (!isDate(time)) {
+
+                    //rest
+                    rest = {
+                        n: 0,
+                        nDeleted: 0,
+                        ok: 0,
+                        err: `invalid time[${time}]`,
+                    }
+
+                    return rest
+                }
+
                 //mr
                 let mr = mongoSql.sql({
                     type: 'delete',
                     table: cl,
                     where: {
-                        time: v.time,
+                        time,
                     },
                 })
                 // console.log('mr', mr)
                 // console.log('mr.query', mr.query)
                 // console.log('mr.values', mr.values)
 
-                //del
+                //del, n與nDeleted皆為主鍵命中筆數, 未命中為0
                 await client.query(mr.query, mr.values)
                     .then((r) => {
 
                         //res
                         rest = {
-                            n: 1,
+                            n: r.rowCount,
                             nDeleted: r.rowCount,
                             ok: 1,
                         }
@@ -1072,9 +1117,12 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表
      *
+     * n與nDeleted皆為實際刪除筆數，不取全表筆數。find未給或為空物件時刪除全部數據，
+     * 條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
+     *
      * @memberOf WOrmPostgresql
      * @param {Object} [find={}] 輸入刪除條件物件
-     * @returns {Promise} 回傳Promise，resolve回傳刪除結果，reject回傳錯誤訊息
+     * @returns {Promise} 回傳Promise，resolve回傳刪除結果物件{n,nDeleted,ok}，reject回傳錯誤訊息
      */
     async function delAll(find = {}) {
         let isErr = false
