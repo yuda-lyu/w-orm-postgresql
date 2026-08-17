@@ -110,6 +110,19 @@ let rsa = [
     },
 ]
 
+let rsb = [
+    {
+        time: '2025-01-01T00:20:00Z',
+        name: 'bulk-1',
+        value: 201,
+    },
+    {
+        time: '2025-01-01T00:21:00Z',
+        name: 'bulk-2',
+        value: 202,
+    },
+]
+
 async function test() {
 
     //wo
@@ -132,6 +145,9 @@ async function test() {
     wo.on('change', function(mode, data, res) {
         console.log('change', mode)
     })
+    wo.on('error', function(mode, data, err) {
+        console.log('error', mode, err)
+    })
 
     //delAll
     await wo.delAll()
@@ -149,6 +165,24 @@ async function test() {
         })
         .catch(function(msg) {
             console.log('insert catch', msg)
+        })
+
+    //insertBulk, 全批視為一個單位, 全部插入成功或一筆都不寫入
+    await wo.insertBulk(rsb)
+        .then(function(msg) {
+            console.log('insertBulk then', msg)
+        })
+        .catch(function(msg) {
+            console.log('insertBulk catch', msg)
+        })
+
+    //insertBulk by pk existed, 任一筆之主鍵已存在即整批reject且不寫入任何一筆
+    await wo.insertBulk(rsb)
+        .then(function(msg) {
+            console.log('insertBulk by pk existed then', msg)
+        })
+        .catch(function(msg) {
+            console.log('insertBulk by pk existed catch', `${msg}`) //reject回傳Error物件, 以樣板字串取其訊息以免印出堆疊
         })
 
     //save
@@ -211,6 +245,15 @@ async function test() {
         })
         .catch(function(msg) {
             console.log('del catch', msg)
+        })
+
+    //del by data without pk, 該筆無法處理故ok為0並附err, 整批仍resolve且另發出error事件
+    await wo.del({ name: 'no-pk' })
+        .then(function(msg) {
+            console.log('del by data without pk then', msg)
+        })
+        .catch(function(msg) {
+            console.log('del by data without pk catch', msg)
         })
 
     //del
@@ -298,6 +341,10 @@ test()
 // delAll then { n: 0, nDeleted: 0, ok: 1 }
 // change insert
 // insert then { n: 13, nInserted: 13, ok: 1 }
+// change insertBulk
+// insertBulk then { n: 2, nInserted: 2, ok: 1 }
+// error insertBulk duplicate key value violates unique constraint "users_pkey"
+// insertBulk by pk existed catch error: duplicate key value violates unique constraint "users_pkey"
 // change save
 // save then [
 //   { n: 1, nInserted: 0, nModified: 0, ok: 1 },
@@ -317,6 +364,8 @@ test()
 //   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 },
 //   { time: 2025-01-01T00:08:00.000Z, name: 'kettle', value: 524 },
 //   { time: 2025-01-01T00:09:00.000Z, name: 'peter', value: 127 },
+//   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
+//   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
 //   {
 //     time: 2025-01-01T00:10:00.000Z,
 //     name: 'rosemary(modify)',
@@ -352,6 +401,8 @@ test()
 //   { time: 2025-01-01T00:03:00.000Z, name: 'peter', value: 200 },
 //   { time: 2025-01-01T00:05:00.000Z, name: 'kettle', value: 488 },
 //   { time: 2025-01-01T00:08:00.000Z, name: 'kettle', value: 524 },
+//   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
+//   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
 //   {
 //     time: 2025-01-01T00:11:00.000Z,
 //     name: 'kettle(modify)',
@@ -374,6 +425,9 @@ test()
 // save then [ { n: 1, nInserted: 1, nModified: 0, ok: 1 } ]
 // change del
 // del then [ { n: 0, nDeleted: 0, ok: 1 } ]
+// error del invalid time[undefined]
+// change del
+// del by data without pk then [ { n: 0, nDeleted: 0, ok: 0, err: 'invalid time[undefined]' } ]
 // change del
 // del then [
 //   { n: 1, nDeleted: 1, ok: 1 },
@@ -391,6 +445,8 @@ test()
 //   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
 //   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },
 //   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 },
+//   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
+//   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
 //   {
 //     time: 2025-01-01T00:10:00.000Z,
 //     name: 'rosemary(modify)',

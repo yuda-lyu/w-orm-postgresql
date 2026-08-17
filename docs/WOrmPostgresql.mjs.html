@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul>
     
 </nav>
 
@@ -290,6 +290,77 @@ function WOrmPostgresql(opt = {}) {
         }
         let key = getCacheKey(find, order)
         _cache[key] = cloneDeep(data) //與外部使用數據脫勾
+    }
+
+    //insertBatches, 分批送出插入語句並以交易包覆, 回傳實際插入筆數, 供insert與insertBulk共用
+    //PostgreSQL之協定以int16記綁定參數個數故上限為65535, 單一語句可送之筆數受欄位數所限,
+    //超出者須分批送出; 分批後單語句之原子性已不足以維持[失敗即不留下部份寫入], 故一律以交易包覆,
+    //令單批與分批之保證來源一致而不因批數而異
+    //兩函數之衝突政策由useConflict區分, 語句各自獨立:
+    //  true : 添加ON CONFLICT DO NOTHING, 已存在主鍵者跳過而不中斷整批, 為insert之語義
+    //  false: 不添加, 任一筆撞主鍵之唯一約束即整句失敗且不寫入任何一筆, 為insertBulk之全有全無語義
+    let insertBatches = async (client, data, useConflict) => {
+
+        //nCols, 取各筆欄位數之最大值
+        let nCols = 1
+        data.forEach(function(v) {
+            nCols = Math.max(nCols, size(keys(v)))
+        })
+
+        //nPerBatch
+        let nPerBatch = Math.max(1, Math.floor(65535 / nCols))
+
+        //ltdata, 分批
+        let ltdata = []
+        for (let i = 0; i &lt; size(data); i += nPerBatch) {
+            ltdata.push(data.slice(i, i + nPerBatch))
+        }
+
+        //transaction
+        await client.query('BEGIN')
+
+        try {
+
+            //nIns
+            let nIns = 0
+
+            //each batch
+            for (let dt of ltdata) {
+
+                //mr
+                let mr = mongoSql.sql({
+                    type: 'insert',
+                    table: cl,
+                    values: dt,
+                })
+
+                //sql
+                let sql = mr.query
+                if (useConflict) {
+                    sql = `${sql} ON CONFLICT (${pkName}) DO NOTHING`
+                }
+
+                //insert
+                let r = await client.query(sql, mr.values)
+
+                //nIns
+                nIns += r.rowCount
+
+            }
+
+            //commit
+            await client.query('COMMIT')
+
+            return nIns
+        }
+        catch (err) {
+
+            //rollback, 令已送出之批次一併回滾
+            await client.query('ROLLBACK').catch(() => {})
+
+            throw err
+        }
+
     }
 
     /**
@@ -695,40 +766,21 @@ function WOrmPostgresql(opt = {}) {
                 return v
             })
 
-            //mr
-            let mr = mongoSql.sql({
-                type: 'insert',
-                table: cl,
-                values: data,
-            })
-            // console.log('mr', mr)
-            // console.log('mr.query', mr.query)
-            // console.log('mr.values', mr.values)
-
-            //添加conflict, 令已存在主鍵者跳過而不中斷整批插入, 主鍵認定與genConflictSQL一致
-            //由PostgreSQL於單一語句內原子完成[檢查主鍵未存在]與[寫入], 併發時同一主鍵僅有一次成功,
-            //同批含重複主鍵時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
-            let sql = `${mr.query} ON CONFLICT (${pkName}) DO NOTHING`
-
             //nAll
             let nAll = size(data)
 
-            //insert, ON CONFLICT DO NOTHING時rowCount即為實際插入筆數
-            await client.query(sql, mr.values)
-                .then((r) => {
+            //insert, 以ON CONFLICT DO NOTHING令已存在主鍵者跳過而不中斷整批插入,
+            //由PostgreSQL於單一語句內原子完成[檢查主鍵未存在]與[寫入], 併發時同一主鍵僅有一次成功,
+            //同批含重複主鍵時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
+            //筆數過多而超出綁定參數上限者由insertBatches分批送出, 主鍵認定與genConflictSQL一致
+            let nIns = await insertBatches(client, data, true)
 
-                    //res
-                    res = {
-                        n: nAll,
-                        nInserted: r.rowCount,
-                        ok: 1,
-                    }
-
-                })
-                .catch((err) => {
-                    isErr = true
-                    res = err.message
-                })
+            //res
+            res = {
+                n: nAll,
+                nInserted: nIns,
+                ok: 1,
+            }
 
         }
         catch (err) {
@@ -763,7 +815,123 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 儲存數據，以主鍵time為準更新既有數據，未給之欄位保留
+     * 批次插入數據，全批視為一個單位，全部插入成功或一筆都不寫入
+     *
+     * 本函數非insert之加速版，兩者衝突政策不同：insert於主鍵已存在時跳過該筆且整批ok為1，
+     * 本函數則於任一筆之主鍵已存在時整批reject且不寫入任何一筆，同批含重複主鍵者亦視為衝突。
+     * n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
+     * 不提供逐筆結果，故不出現ok:0與err，需要逐筆處置者改用insert。
+     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報，
+     * 且主鍵檢查於任何寫入之前一次完成，故整批reject時同批之有效筆數亦不會被寫入。
+     *
+     * @memberOf WOrmPostgresql
+     * @param {Object|Array} data 輸入數據物件或陣列
+     * @returns {Promise} 回傳Promise，resolve回傳插入結果物件{n,nInserted,ok}，reject回傳錯誤訊息
+     */
+    async function insertBulk(data) {
+        let isErr = false
+        let res = null
+
+        //check
+        if (!iseobj(data) &amp;&amp; !isearr(data)) {
+            return {
+                n: 0,
+                nInserted: 0,
+                ok: 1,
+            }
+        }
+
+        //cloneDeep
+        data = cloneDeep(data)
+
+        //client
+        let client = new PgClient({ connectionString })
+
+        //connect
+        try {
+
+            //connect
+            await client.connect()
+
+        }
+        catch (err) {
+            isErr = true
+            res = err
+            client = null
+        }
+
+        //check
+        if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('insertBulk', data, res)
+
+            return Promise.reject(res)
+        }
+
+        try {
+
+            //check
+            if (!isarr(data)) {
+                data = [data]
+            }
+
+            //check pk, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤
+            data = map(data, function(v, k) {
+                if (!checkPk(get(v, pkName))) {
+                    throw new Error(`invalid data[${k}].${pkName}[${get(v, pkName)}]`)
+                }
+                return v
+            })
+
+            //nAll
+            let nAll = size(data)
+
+            //insertBulk, 不添加conflict, 令任一筆撞主鍵之唯一約束即整句失敗且不寫入任何一筆,
+            //同批含重複主鍵者亦於此被偵測為衝突; 筆數過多者由insertBatches分批送出並以交易維持全有全無
+            let nIns = await insertBatches(client, data, false)
+
+            //res
+            res = {
+                n: nAll,
+                nInserted: nIns,
+                ok: 1,
+            }
+
+        }
+        catch (err) {
+            isErr = true
+            res = err
+        }
+        finally {
+            await client.end()
+            client = null
+        }
+
+        //update
+        if (useCache) {
+            clearCache()
+        }
+
+        //emit
+        if (!isErr) {
+            emitChange('insertBulk', data, res)
+        }
+
+        //check
+        if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('insertBulk', data, res)
+
+            return Promise.reject(res)
+        }
+
+        return res
+    }
+
+    /**
+     * 儲存數據，以主鍵為準更新既有數據，未給之欄位保留
      *
      * 回傳陣列恆與輸入等長，輸入單一物件亦回傳長度1之陣列。
      * 各筆之n為主鍵命中筆數，值為0或1，命中(不論內容有無變更)或經插入而產生皆為1；
@@ -1408,6 +1576,7 @@ function WOrmPostgresql(opt = {}) {
     ee.select = select
     ee.selectByPk = selectByPk
     ee.insert = insert
+    ee.insertBulk = insertBulk
     ee.save = save
     ee.del = del
     ee.delAll = delAll
@@ -1431,7 +1600,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 09:06:32 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 11:51:27 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

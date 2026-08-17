@@ -957,6 +957,32 @@ describe('insert nInserted', function() {
         let vdup = await wo.selectByPk('2025-02-01T00:05:00Z')
         vget[8] = vdup.name
 
+        //跨批次之插入
+        //欄位數愈多則單一語句可送之筆數愈少, 以21欄之資料表令每批上限為3120筆, 送3200筆即須分為2批
+        //其中既有主鍵者跳過而其餘照插, 與insertBulk之全有全無不同
+        let clBat = 'insertbatch'
+        let woBat = WOrm(genOpt(clBat))
+        let vSample = { time: '2000-01-01T00:00:00Z' }
+        Array.from({ length: 20 }, (v, k) => k).forEach((k) => {
+            vSample[`f${k}`] = 'abc'
+        })
+        await woBat.createTable(clBat, null, vSample).catch(() => {})
+        await woBat.delAll()
+
+        //genRec
+        let genRec = (k) => {
+            let v = { time: new Date(Date.UTC(2025, 8, 1, 0, 0, 0) + k * 1000).toISOString() }
+            Array.from({ length: 20 }, (v2, k2) => k2).forEach((k2) => {
+                v[`f${k2}`] = `v${k}-${k2}`
+            })
+            return v
+        }
+
+        //先插入末筆之主鍵, 令後續之大批次於第2批撞上該筆
+        await woBat.insert(genRec(3199))
+        vget[9] = await woBat.insert(Array.from({ length: 3200 }, (v, k) => genRec(k)))
+        vget[10] = (await woBat.select()).length
+
     })
 
     vans[1] = { n: 3, nInserted: 3, ok: 1 }
@@ -997,6 +1023,16 @@ describe('insert nInserted', function() {
     vans[8] = 'dup-1'
     it(`should get ${JSON.stringify(vans[8])} for keeping first one of duplicated time in same batch`, async function() {
         assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = { n: 3200, nInserted: 3199, ok: 1 }
+    it(`should get ${JSON.stringify(vans[9])} for insert across batches with 1 pk existed`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = 3200
+    it(`should get ${JSON.stringify(vans[10])} for records after insert across batches`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
     })
 
 })
@@ -1669,6 +1705,230 @@ describe('events', function() {
     vans[20] = true
     it(`should get ${JSON.stringify(vans[20])} for same selectByPk result with and without error listener`, async function() {
         assert.strict.deepStrictEqual(vget[20], vans[20])
+    })
+
+})
+
+
+describe('insertBulk', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(300000)
+
+        //wo
+        let cl = 'bulk'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, null, {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //genTime, 依序產生不重複之主鍵值
+        let genTime = (k) => {
+            return new Date(Date.UTC(2025, 7, 1, 0, 0, 0) + k * 1000).toISOString()
+        }
+
+        //evChange, evError
+        let evChange = []
+        let evError = []
+        wo.on('change', (mode) => {
+            evChange.push(mode)
+        })
+        wo.on('error', (mode) => {
+            evError.push(mode)
+        })
+
+        //nRec, 取得目前筆數
+        let nRec = async () => {
+            return (await wo.select()).length
+        }
+
+        //無衝突, nInserted須等於n
+        vget[1] = await wo.insertBulk([
+            { time: genTime(0), name: 'peter', value: 1 },
+            { time: genTime(1), name: 'rosemary', value: 2 },
+            { time: genTime(2), name: 'kettle', value: 3 },
+        ])
+        vget[2] = await nRec()
+        vget[3] = evChange.slice()
+
+        //撞既有主鍵, 整批reject且不寫入任何一筆
+        evChange = []
+        evError = []
+        vget[4] = await wo.insertBulk([
+            { time: genTime(10), name: 'new-1', value: 11 },
+            { time: genTime(0), name: 'conflict', value: 12 },
+            { time: genTime(11), name: 'new-2', value: 13 },
+        ])
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+        vget[5] = await nRec()
+        vget[6] = evError.slice()
+        vget[7] = evChange.slice()
+
+        //同批含重複主鍵, 亦視為衝突而整批reject
+        evChange = []
+        evError = []
+        vget[8] = await wo.insertBulk([
+            { time: genTime(20), name: 'dup-1', value: 21 },
+            { time: genTime(20), name: 'dup-2', value: 22 },
+            { time: genTime(21), name: 'uniq', value: 23 },
+        ])
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+        vget[9] = await nRec()
+
+        //未帶有效主鍵, 不補值而整批reject
+        vget[10] = await wo.insertBulk([
+            { time: genTime(30), name: 'ok', value: 31 },
+            { name: 'no-pk', value: 32 },
+        ])
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+        vget[11] = await nRec()
+
+        //輸入無效
+        vget[12] = await wo.insertBulk(null)
+
+        //單一物件亦回傳單一物件
+        vget[13] = await wo.insertBulk({ time: genTime(40), name: 'single', value: 41 })
+        vget[14] = await nRec()
+
+        //跨批次之回滾
+        //欄位數愈多則單一語句可送之筆數愈少, 以21欄之資料表令每批上限為3120筆,
+        //送3200筆即須分為2批, 末筆撞既有主鍵時第1批已送出, 須由交易回滾方能維持全有全無
+        let clBat = 'bulkbatch'
+        let woBat = WOrm(genOpt(clBat))
+        let vSample = { time: '2000-01-01T00:00:00Z' }
+        Array.from({ length: 20 }, (v, k) => k).forEach((k) => {
+            vSample[`f${k}`] = 'abc'
+        })
+        await woBat.createTable(clBat, null, vSample).catch(() => {})
+        await woBat.delAll()
+
+        //genRec
+        let genRec = (k) => {
+            let v = { time: genTime(k) }
+            Array.from({ length: 20 }, (v2, k2) => k2).forEach((k2) => {
+                v[`f${k2}`] = `v${k}-${k2}`
+            })
+            return v
+        }
+
+        //先插入末筆之主鍵, 令後續之大批次於第2批撞上
+        let kLast = 3199
+        await woBat.insert(genRec(kLast))
+        let nBefore = (await woBat.select()).length
+
+        //3200筆之批次, 末筆與既有衝突
+        vget[15] = await woBat.insertBulk(Array.from({ length: 3200 }, (v, k) => genRec(k)))
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+
+        //失敗後資料表不得有任何新增
+        vget[16] = (await woBat.select()).length - nBefore
+
+        //跨批次且無衝突者須全數寫入
+        await woBat.delAll()
+        vget[17] = await woBat.insertBulk(Array.from({ length: 3200 }, (v, k) => genRec(k)))
+        vget[18] = (await woBat.select()).length
+
+    })
+
+    vans[1] = { n: 3, nInserted: 3, ok: 1 }
+    it(`should get ${JSON.stringify(vans[1])} for insertBulk without conflict`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = 3
+    it(`should get ${JSON.stringify(vans[2])} for records after insertBulk without conflict`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = ['insertBulk']
+    it(`should get ${JSON.stringify(vans[3])} for change modes by insertBulk`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = 'rejected'
+    it(`should get ${JSON.stringify(vans[4])} for insertBulk with pk existed`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = 3
+    it(`should get ${JSON.stringify(vans[5])} for records after insertBulk with pk existed`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = ['insertBulk']
+    it(`should get ${JSON.stringify(vans[6])} for error modes by insertBulk with pk existed`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = []
+    it(`should get ${JSON.stringify(vans[7])} for change modes by insertBulk rejected`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = 'rejected'
+    it(`should get ${JSON.stringify(vans[8])} for insertBulk with duplicated pk in same batch`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = 3
+    it(`should get ${JSON.stringify(vans[9])} for records after insertBulk with duplicated pk`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = 'rejected'
+    it(`should get ${JSON.stringify(vans[10])} for insertBulk without valid pk`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = 3
+    it(`should get ${JSON.stringify(vans[11])} for records after insertBulk without valid pk`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+    vans[12] = { n: 0, nInserted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[12])} for insertBulk with invalid data`, async function() {
+        assert.strict.deepStrictEqual(vget[12], vans[12])
+    })
+
+    vans[13] = { n: 1, nInserted: 1, ok: 1 }
+    it(`should get ${JSON.stringify(vans[13])} for insertBulk with single object`, async function() {
+        assert.strict.deepStrictEqual(vget[13], vans[13])
+    })
+
+    vans[14] = 4
+    it(`should get ${JSON.stringify(vans[14])} for records after insertBulk with single object`, async function() {
+        assert.strict.deepStrictEqual(vget[14], vans[14])
+    })
+
+    vans[15] = 'rejected'
+    it(`should get ${JSON.stringify(vans[15])} for insertBulk across batches with pk existed`, async function() {
+        assert.strict.deepStrictEqual(vget[15], vans[15])
+    })
+
+    vans[16] = 0
+    it(`should get ${JSON.stringify(vans[16])} for increment of records after insertBulk across batches failed`, async function() {
+        assert.strict.deepStrictEqual(vget[16], vans[16])
+    })
+
+    vans[17] = { n: 3200, nInserted: 3200, ok: 1 }
+    it(`should get ${JSON.stringify(vans[17])} for insertBulk across batches without conflict`, async function() {
+        assert.strict.deepStrictEqual(vget[17], vans[17])
+    })
+
+    vans[18] = 3200
+    it(`should get ${JSON.stringify(vans[18])} for records after insertBulk across batches`, async function() {
+        assert.strict.deepStrictEqual(vget[18], vans[18])
     })
 
 })
