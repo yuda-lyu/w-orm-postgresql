@@ -299,7 +299,7 @@ function WOrmPostgresql(opt = {}) {
     //兩函數之衝突政策由useConflict區分, 語句各自獨立:
     //  true : 添加ON CONFLICT DO NOTHING, 已存在主鍵者跳過而不中斷整批, 為insert之語義
     //  false: 不添加, 任一筆撞主鍵之唯一約束即整句失敗且不寫入任何一筆, 為insertBulk之全有全無語義
-    let insertBatches = async (client, data, useConflict) => {
+    let insertBatches = async (client, data, useConflict, returnPk = false) => {
 
         //nCols, 取各筆欄位數之最大值
         let nCols = 1
@@ -321,8 +321,9 @@ function WOrmPostgresql(opt = {}) {
 
         try {
 
-            //nIns
+            //nIns, rows
             let nIns = 0
+            let rows = []
 
             //each batch
             for (let dt of ltdata) {
@@ -339,6 +340,10 @@ function WOrmPostgresql(opt = {}) {
                 if (useConflict) {
                     sql = `${sql} ON CONFLICT (${pkName}) DO NOTHING`
                 }
+                if (returnPk) {
+                    //RETURNING僅回傳實際插入之列, 供逐筆結果映回輸入序
+                    sql = `${sql} RETURNING ${pkName}`
+                }
 
                 //insert
                 let r = await client.query(sql, mr.values)
@@ -346,12 +351,20 @@ function WOrmPostgresql(opt = {}) {
                 //nIns
                 nIns += r.rowCount
 
+                //rows, 分批時逐批收集再串接
+                if (returnPk) {
+                    rows = rows.concat(get(r, 'rows', []))
+                }
+
             }
 
             //commit
             await client.query('COMMIT')
 
-            return nIns
+            return {
+                nIns,
+                rows,
+            }
         }
         catch (err) {
 
@@ -361,6 +374,50 @@ function WOrmPostgresql(opt = {}) {
             throw err
         }
 
+    }
+
+    //genInsertList, 依RETURNING所回傳之主鍵值映回輸入序, 產生與輸入等長且保序之逐筆結果
+    //後端回傳之型別未必與輸入相同(如TIMESTAMPTZ欄位輸入字串而回傳Date物件), 直接比對必然落空,
+    //故依回傳值之實際型別決定正規化方式, 且兩側共用同一函數
+    //不採[一律嘗試解析為日期]之通用寫法, 因主鍵為文字欄位而值形如'2025'與'2025-01-01'者
+    //將正規化為同值而誤判, 依實際型別分流則無此問題
+    //同批含重複主鍵時RETURNING僅回傳一次, 故以首次出現者為已插入, 其餘視為已存在而跳過
+    let genInsertList = (data, rows) => {
+
+        //isDateCol, 以回傳值之實際型別判定
+        let isDateCol = size(rows) > 0 &amp;&amp; rows[0][pkName] instanceof Date
+
+        //normPk
+        let normPk = (v) => {
+            if (isDateCol) {
+                return new Date(v).toISOString()
+            }
+            return String(v)
+        }
+
+        //setIns, 實際插入之主鍵
+        let setIns = new Set()
+        rows.forEach(function(v) {
+            setIns.add(normPk(get(v, pkName)))
+        })
+
+        //ltres
+        let setSeen = new Set()
+        return map(data, function(v) {
+
+            //pkv
+            let pkv = normPk(get(v, pkName))
+
+            //inserted
+            let inserted = setIns.has(pkv) &amp;&amp; !setSeen.has(pkv)
+            setSeen.add(pkv)
+
+            return {
+                n: 1,
+                nInserted: inserted ? 1 : 0,
+                ok: 1,
+            }
+        })
     }
 
     /**
@@ -702,20 +759,38 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫
      *
-     * n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
-     * 不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
+     * 預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
+     * 全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
      * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。
+     *
+     * option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
+     * 而非僅知[有幾筆]。各元素之n恆為1、ok恆為1，因insert之任何錯誤皆屬整批性錯誤而reject，
+     * 故逐筆元素不出現ok:0與err；同批含重複主鍵者以首次出現者之nInserted為1，其餘為0。
+     * 兩種取值下之不變式為陣列長度等於輸入筆數，且nInserted為1者之筆數等於聚合模式之nInserted。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
-     * @returns {Promise} 回傳Promise，resolve回傳插入結果物件{n,nInserted,ok}，reject回傳錯誤訊息
+     * @param {Object} [option={}] 輸入設定物件，預設為{}
+     * @param {Boolean} [option.returnList=false] 輸入是否改回傳逐筆結果陣列，預設為false
+     * @returns {Promise} 回傳Promise，resolve於returnList為false時回傳插入結果物件{n,nInserted,ok}，
+     * 為true時回傳逐筆結果陣列[{n,nInserted,ok}]，reject回傳錯誤訊息
      */
-    async function insert(data) {
+    async function insert(data, option = {}) {
         let isErr = false
         let res = null
 
+        //returnList
+        let returnList = get(option, 'returnList', false)
+        if (!isbol(returnList)) {
+            returnList = false
+        }
+
         //check
+        //輸入無效時, returnList為true者回傳空陣列以對齊save與del之規定
         if (!iseobj(data) &amp;&amp; !isearr(data)) {
+            if (returnList) {
+                return []
+            }
             return {
                 n: 0,
                 nInserted: 0,
@@ -773,13 +848,19 @@ function WOrmPostgresql(opt = {}) {
             //由PostgreSQL於單一語句內原子完成[檢查主鍵未存在]與[寫入], 併發時同一主鍵僅有一次成功,
             //同批含重複主鍵時亦僅首筆成功, 故不須逐筆插入即可取得實際插入筆數
             //筆數過多而超出綁定參數上限者由insertBatches分批送出, 主鍵認定與genConflictSQL一致
-            let nIns = await insertBatches(client, data, true)
+            //returnList為true時另附RETURNING, 以實際插入之主鍵映回輸入序而得逐筆結果
+            let { nIns, rows } = await insertBatches(client, data, true, returnList)
 
             //res
-            res = {
-                n: nAll,
-                nInserted: nIns,
-                ok: 1,
+            if (returnList) {
+                res = genInsertList(data, rows)
+            }
+            else {
+                res = {
+                    n: nAll,
+                    nInserted: nIns,
+                    ok: 1,
+                }
             }
 
         }
@@ -889,7 +970,8 @@ function WOrmPostgresql(opt = {}) {
 
             //insertBulk, 不添加conflict, 令任一筆撞主鍵之唯一約束即整句失敗且不寫入任何一筆,
             //同批含重複主鍵者亦於此被偵測為衝突; 筆數過多者由insertBatches分批送出並以交易維持全有全無
-            let nIns = await insertBatches(client, data, false)
+            //不附RETURNING, 因成功時逐筆恆為已插入而nInserted恆等於n, 取回主鍵值無資訊量
+            let { nIns } = await insertBatches(client, data, false)
 
             //res
             res = {
@@ -1600,7 +1682,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 11:51:27 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 18:44:49 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

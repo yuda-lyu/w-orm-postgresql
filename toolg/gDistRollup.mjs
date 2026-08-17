@@ -7,7 +7,7 @@ let fdTar = './dist'
 
 
 rollupFiles({
-    fns: getFiles(fdSrc),
+    fns: 'WOrmPostgresql.mjs',
     fdSrc,
     fdTar,
     nameDistType: 'kebabCase',

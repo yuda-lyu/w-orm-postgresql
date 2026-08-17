@@ -146,6 +146,19 @@ let rsb = [
     },
 ]
 
+let rsr = [
+    { //已存在, 為前次insertBulk所插入
+        time: '2025-01-01T00:20:00Z',
+        name: 'bulk-1',
+        value: 201,
+    },
+    { //不存在須新增
+        time: '2025-01-01T00:22:00Z',
+        name: 'ret-new',
+        value: 203,
+    },
+]
+
 async function test() {
 
     //wo
@@ -206,6 +219,15 @@ async function test() {
         })
         .catch(function(msg) {
             console.log('insertBulk by pk existed catch', `${msg}`) //reject回傳Error物件, 以樣板字串取其訊息以免印出堆疊
+        })
+
+    //insert by returnList, 改回傳與輸入等長且保序之逐筆結果, 令呼叫端得知是哪幾筆為新數據
+    await wo.insert(rsr, { returnList: true })
+        .then(function(msg) {
+            console.log('insert by returnList then', msg)
+        })
+        .catch(function(msg) {
+            console.log('insert by returnList catch', `${msg}`)
         })
 
     //save
@@ -368,6 +390,8 @@ test()
 // insertBulk then { n: 2, nInserted: 2, ok: 1 }
 // error insertBulk duplicate key value violates unique constraint "users_pkey"
 // insertBulk by pk existed catch error: duplicate key value violates unique constraint "users_pkey"
+// change insert
+// insert by returnList then [ { n: 1, nInserted: 0, ok: 1 }, { n: 1, nInserted: 1, ok: 1 } ]
 // change save
 // save then [
 //   { n: 1, nInserted: 0, nModified: 0, ok: 1 },
@@ -389,6 +413,7 @@ test()
 //   { time: 2025-01-01T00:09:00.000Z, name: 'peter', value: 127 },
 //   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
 //   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
+//   { time: 2025-01-01T00:22:00.000Z, name: 'ret-new', value: 203 },
 //   {
 //     time: 2025-01-01T00:10:00.000Z,
 //     name: 'rosemary(modify)',
@@ -426,6 +451,7 @@ test()
 //   { time: 2025-01-01T00:08:00.000Z, name: 'kettle', value: 524 },
 //   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
 //   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
+//   { time: 2025-01-01T00:22:00.000Z, name: 'ret-new', value: 203 },
 //   {
 //     time: 2025-01-01T00:11:00.000Z,
 //     name: 'kettle(modify)',
@@ -470,6 +496,7 @@ test()
 //   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 },
 //   { time: 2025-01-01T00:20:00.000Z, name: 'bulk-1', value: 201 },
 //   { time: 2025-01-01T00:21:00.000Z, name: 'bulk-2', value: 202 },
+//   { time: 2025-01-01T00:22:00.000Z, name: 'ret-new', value: 203 },
 //   {
 //     time: 2025-01-01T00:10:00.000Z,
 //     name: 'rosemary(modify)',

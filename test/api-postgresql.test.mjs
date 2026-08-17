@@ -4,6 +4,7 @@ import path from 'path'
 import pg from 'pg'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
+import isarr from 'wsemi/src/isarr.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
 
@@ -1929,6 +1930,197 @@ describe('insertBulk', function() {
     vans[18] = 3200
     it(`should get ${JSON.stringify(vans[18])} for records after insertBulk across batches`, async function() {
         assert.strict.deepStrictEqual(vget[18], vans[18])
+    })
+
+})
+
+
+describe('insert returnList', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(180000)
+
+        //wo
+        let cl = 'retlist'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, null, {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //genRec
+        let genRec = (k) => {
+            return {
+                time: new Date(Date.UTC(2025, 9, 1, 0, 0, 0) + k * 1000).toISOString(),
+                name: `n${k}`,
+                value: k,
+            }
+        }
+
+        //evChange
+        let evChange = []
+        wo.on('change', (mode, data, res) => {
+            evChange.push(res)
+        })
+
+        //先插入第1與第3筆, 令後續之批次呈現[新,舊,新,舊,新]之交錯
+        await wo.insert([genRec(1), genRec(3)])
+
+        //returnList為true, 須與輸入等長保序且對位正確
+        evChange = []
+        vget[1] = await wo.insert([genRec(0), genRec(1), genRec(2), genRec(3), genRec(4)], { returnList: true })
+        vget[2] = vget[1].map((v) => v.nInserted)
+        vget[3] = vget[1].length
+        vget[4] = Object.keys(vget[1][0]).sort()
+        vget[5] = vget[1].filter((v) => v.nInserted === 1).length
+
+        //change事件之res即本次實際回傳值
+        vget[6] = isarr(evChange[0]) ? evChange[0].length : null
+
+        //聚合模式之nInserted須等於逐筆模式之filter計數
+        await wo.delAll()
+        await wo.insert([genRec(1), genRec(3)])
+        vget[7] = await wo.insert([genRec(0), genRec(1), genRec(2), genRec(3), genRec(4)])
+
+        //同批含重複主鍵, 僅首次出現者之nInserted為1
+        await wo.delAll()
+        vget[8] = (await wo.insert([genRec(10), genRec(10), genRec(11)], { returnList: true })).map((v) => v.nInserted)
+
+        //輸入無效, returnList為true回傳空陣列, 為false回傳聚合物件
+        vget[9] = await wo.insert(null, { returnList: true })
+        vget[10] = await wo.insert(null)
+
+        //單一物件輸入亦回傳長度1之陣列
+        await wo.delAll()
+        vget[11] = await wo.insert(genRec(20), { returnList: true })
+
+        //returnList為false時形狀不變
+        vget[12] = await wo.insert(genRec(21))
+
+        //文字主鍵之型別分流, 主鍵非時間戳者不得誤判
+        let clC = 'retlistcode'
+        let woC = WOrm({
+            ...genOpt(clC),
+            pk: 'code',
+        })
+        await woC.createTable(clC, null, {
+            code: 'abc',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await woC.delAll()
+        await woC.insert([
+            { code: 'c1', name: 'n1', value: 1 },
+            { code: 'c3', name: 'n3', value: 3 },
+        ])
+        vget[13] = (await woC.insert([
+            { code: 'c0', name: 'n0', value: 0 },
+            { code: 'c1', name: 'n1', value: 1 },
+            { code: 'c2', name: 'n2', value: 2 },
+            { code: 'c3', name: 'n3', value: 3 },
+            { code: 'c4', name: 'n4', value: 4 },
+        ], { returnList: true })).map((v) => v.nInserted)
+
+        //文字主鍵而值形如日期者, 不得因正規化而碰撞
+        let clD = 'retlistdate'
+        let woD = WOrm({
+            ...genOpt(clD),
+            pk: 'code',
+        })
+        await woD.createTable(clD, null, {
+            code: 'abc',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await woD.delAll()
+        await woD.insert({ code: '2025', name: 'y', value: 1 })
+        vget[14] = (await woD.insert([
+            { code: '2025', name: 'y', value: 1 },
+            { code: '2025-01-01', name: 'd', value: 2 },
+        ], { returnList: true })).map((v) => v.nInserted)
+
+    })
+
+    vans[1] = [
+        { n: 1, nInserted: 1, ok: 1 },
+        { n: 1, nInserted: 0, ok: 1 },
+        { n: 1, nInserted: 1, ok: 1 },
+        { n: 1, nInserted: 0, ok: 1 },
+        { n: 1, nInserted: 1, ok: 1 },
+    ]
+    it(`should get ${JSON.stringify(vans[1])} for insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = [1, 0, 1, 0, 1]
+    it(`should get ${JSON.stringify(vans[2])} for nInserted in order by insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = 5
+    it(`should get ${JSON.stringify(vans[3])} for length of insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = ['n', 'nInserted', 'ok']
+    it(`should get ${JSON.stringify(vans[4])} for keys of each element by insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = 3
+    it(`should get ${JSON.stringify(vans[5])} for count of nInserted===1 by insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = 5
+    it(`should get ${JSON.stringify(vans[6])} for length of res in change event by insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = { n: 5, nInserted: 3, ok: 1 }
+    it(`should get ${JSON.stringify(vans[7])} for insert without returnList on same input`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = [1, 0, 1]
+    it(`should get ${JSON.stringify(vans[8])} for duplicated pk in same batch by insert with returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = []
+    it(`should get ${JSON.stringify(vans[9])} for insert with invalid data and returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = { n: 0, nInserted: 0, ok: 1 }
+    it(`should get ${JSON.stringify(vans[10])} for insert with invalid data and without returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = [{ n: 1, nInserted: 1, ok: 1 }]
+    it(`should get ${JSON.stringify(vans[11])} for insert with single object and returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+    vans[12] = { n: 1, nInserted: 1, ok: 1 }
+    it(`should get ${JSON.stringify(vans[12])} for insert with single object and without returnList`, async function() {
+        assert.strict.deepStrictEqual(vget[12], vans[12])
+    })
+
+    vans[13] = [1, 0, 1, 0, 1]
+    it(`should get ${JSON.stringify(vans[13])} for insert with returnList by custom text pk`, async function() {
+        assert.strict.deepStrictEqual(vget[13], vans[13])
+    })
+
+    vans[14] = [0, 1]
+    it(`should get ${JSON.stringify(vans[14])} for insert with returnList by text pk looking like date`, async function() {
+        assert.strict.deepStrictEqual(vget[14], vans[14])
     })
 
 })
