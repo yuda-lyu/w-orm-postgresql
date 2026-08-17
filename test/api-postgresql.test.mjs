@@ -1434,6 +1434,246 @@ describe('custom pk', function() {
 })
 
 
+describe('events', function() {
+    let vans = {}
+    let vget = {}
+
+    before(async function() {
+        this.timeout(120000)
+
+        //wo
+        let cl = 'events'
+        let wo = WOrm(genOpt(cl))
+
+        //createTable
+        await wo.createTable(cl, null, {
+            time: '2000-01-01T00:00:00Z',
+            name: 'abc',
+            value: 0.1,
+        }).catch(() => {})
+        await wo.delAll()
+
+        //evChange, evError, 收集事件供斷言
+        let evChange = []
+        let evError = []
+        wo.on('change', (mode, data, res) => {
+            evChange.push({ mode, res })
+        })
+        wo.on('error', (mode, data, err) => {
+            evError.push({ mode, err })
+        })
+
+        //reset
+        let reset = () => {
+            evChange = []
+            evError = []
+        }
+
+        //t
+        let t1 = '2025-07-01T00:00:00Z'
+        let t2 = '2025-07-01T00:01:00Z'
+        let t3 = '2025-07-01T00:02:00Z'
+        let t4 = '2025-07-01T00:03:00Z'
+        let tNone = '2025-07-01T23:00:00Z'
+
+        //insert正常, 發change且不發error
+        reset()
+        await wo.insert([
+            { time: t1, name: 'peter', value: 1 },
+            { time: t2, name: 'rosemary', value: 2 },
+        ])
+        vget[1] = evChange.map((v) => v.mode)
+        vget[2] = evError.length
+
+        //insert全數已存在為正常結果, 不得發error
+        reset()
+        await wo.insert({ time: t1, name: 'peter', value: 1 })
+        vget[3] = evError.length
+
+        //save之逐筆插入另發mode為insert之change, 整批再發save
+        reset()
+        await wo.save({ time: t3, name: 'sandler' })
+        vget[4] = evChange.map((v) => v.mode)
+
+        //save合併後內容相同為正常結果, 不得發error
+        reset()
+        await wo.save({ time: t3, name: 'sandler' })
+        vget[5] = evError.length
+
+        //save逐筆失敗發error且整批仍resolve
+        reset()
+        let rsf = await wo.save([
+            { time: t1, name: 'ok' },
+            { time: t4, notexistcol: 1 },
+        ])
+        vget[6] = evError.map((v) => v.mode)
+        vget[7] = isestr(evError[0].err)
+        vget[8] = rsf.length
+        vget[9] = evChange.map((v) => v.mode)
+
+        //del未帶有效主鍵為逐筆失敗, 發error
+        reset()
+        await wo.del([{ name: 'no-pk' }])
+        vget[10] = evError.map((v) => v.mode)
+
+        //del主鍵未命中為正常結果, 不得發error
+        reset()
+        await wo.del({ time: tNone })
+        vget[11] = evError.length
+
+        //selectByPk查無數據為正常結果, 不得發error
+        reset()
+        await wo.selectByPk(tNone)
+        vget[12] = evError.length
+
+        //selectByPk主鍵值無效為正常結果, 不得發error
+        reset()
+        await wo.selectByPk('abc')
+        vget[13] = evError.length
+
+        //delAll條件無命中為正常結果, 不得發error
+        reset()
+        await wo.delAll({ name: 'notexist' })
+        vget[14] = evError.length
+
+        //整批性錯誤於reject之前發出error
+        reset()
+        vget[15] = await wo.insert({ name: 'no-pk' })
+            .then(() => 'resolved')
+            .catch(() => 'rejected')
+        vget[16] = evError.map((v) => v.mode)
+
+        //T10.1第2條, 操作行為不得因監聽者之有無而改變
+        //woNo未註冊任何監聽, woOn註冊error監聽, 兩者之回傳值須完全相同
+        let woNo = WOrm(genOpt(cl))
+        let woOn = WOrm(genOpt(cl))
+        woOn.on('error', () => {})
+
+        //整批性錯誤
+        let rNo1 = await woNo.insert({ name: 'no-pk' })
+            .then(() => 'resolved')
+            .catch((err) => `rejected:${err}`)
+        let rOn1 = await woOn.insert({ name: 'no-pk' })
+            .then(() => 'resolved')
+            .catch((err) => `rejected:${err}`)
+        vget[17] = rNo1 === rOn1
+        vget[18] = rNo1.indexOf('rejected:') === 0
+
+        //逐筆失敗
+        let rNo2 = await woNo.del([{ name: 'no-pk' }])
+        let rOn2 = await woOn.del([{ name: 'no-pk' }])
+        vget[19] = JSON.stringify(rNo2) === JSON.stringify(rOn2)
+
+        //正常操作
+        let rNo3 = await woNo.selectByPk(t1)
+        let rOn3 = await woOn.selectByPk(t1)
+        vget[20] = JSON.stringify(rNo3) === JSON.stringify(rOn3)
+
+    })
+
+    vans[1] = ['insert']
+    it(`should get ${JSON.stringify(vans[1])} for change modes by insert`, async function() {
+        assert.strict.deepStrictEqual(vget[1], vans[1])
+    })
+
+    vans[2] = 0
+    it(`should get ${JSON.stringify(vans[2])} for error count by insert`, async function() {
+        assert.strict.deepStrictEqual(vget[2], vans[2])
+    })
+
+    vans[3] = 0
+    it(`should get ${JSON.stringify(vans[3])} for error count by insert with all existed`, async function() {
+        assert.strict.deepStrictEqual(vget[3], vans[3])
+    })
+
+    vans[4] = ['insert', 'save']
+    it(`should get ${JSON.stringify(vans[4])} for change modes by save with autoInsert`, async function() {
+        assert.strict.deepStrictEqual(vget[4], vans[4])
+    })
+
+    vans[5] = 0
+    it(`should get ${JSON.stringify(vans[5])} for error count by save with same content`, async function() {
+        assert.strict.deepStrictEqual(vget[5], vans[5])
+    })
+
+    vans[6] = ['save']
+    it(`should get ${JSON.stringify(vans[6])} for error modes by save with 1 failed record`, async function() {
+        assert.strict.deepStrictEqual(vget[6], vans[6])
+    })
+
+    vans[7] = true
+    it(`should get ${JSON.stringify(vans[7])} for err of error event being string`, async function() {
+        assert.strict.deepStrictEqual(vget[7], vans[7])
+    })
+
+    vans[8] = 2
+    it(`should get ${JSON.stringify(vans[8])} for length of save result while 1 record failed`, async function() {
+        assert.strict.deepStrictEqual(vget[8], vans[8])
+    })
+
+    vans[9] = ['save']
+    it(`should get ${JSON.stringify(vans[9])} for change modes by save while 1 record failed`, async function() {
+        assert.strict.deepStrictEqual(vget[9], vans[9])
+    })
+
+    vans[10] = ['del']
+    it(`should get ${JSON.stringify(vans[10])} for error modes by del without valid pk`, async function() {
+        assert.strict.deepStrictEqual(vget[10], vans[10])
+    })
+
+    vans[11] = 0
+    it(`should get ${JSON.stringify(vans[11])} for error count by del with pk not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[11], vans[11])
+    })
+
+    vans[12] = 0
+    it(`should get ${JSON.stringify(vans[12])} for error count by selectByPk with pk not existed`, async function() {
+        assert.strict.deepStrictEqual(vget[12], vans[12])
+    })
+
+    vans[13] = 0
+    it(`should get ${JSON.stringify(vans[13])} for error count by selectByPk with pk invalid`, async function() {
+        assert.strict.deepStrictEqual(vget[13], vans[13])
+    })
+
+    vans[14] = 0
+    it(`should get ${JSON.stringify(vans[14])} for error count by delAll with find matched nothing`, async function() {
+        assert.strict.deepStrictEqual(vget[14], vans[14])
+    })
+
+    vans[15] = 'rejected'
+    it(`should get ${JSON.stringify(vans[15])} for insert without valid pk`, async function() {
+        assert.strict.deepStrictEqual(vget[15], vans[15])
+    })
+
+    vans[16] = ['insert']
+    it(`should get ${JSON.stringify(vans[16])} for error modes by insert without valid pk`, async function() {
+        assert.strict.deepStrictEqual(vget[16], vans[16])
+    })
+
+    vans[17] = true
+    it(`should get ${JSON.stringify(vans[17])} for same reject value with and without error listener`, async function() {
+        assert.strict.deepStrictEqual(vget[17], vans[17])
+    })
+
+    vans[18] = true
+    it(`should get ${JSON.stringify(vans[18])} for still rejecting without error listener`, async function() {
+        assert.strict.deepStrictEqual(vget[18], vans[18])
+    })
+
+    vans[19] = true
+    it(`should get ${JSON.stringify(vans[19])} for same del result with and without error listener`, async function() {
+        assert.strict.deepStrictEqual(vget[19], vans[19])
+    })
+
+    vans[20] = true
+    it(`should get ${JSON.stringify(vans[20])} for same selectByPk result with and without error listener`, async function() {
+        assert.strict.deepStrictEqual(vget[20], vans[20])
+    })
+
+})
+
+
 //runProc, 另起行程對同一資料表操作, 用於驗證跨行程之原子性
 //子行程以--input-type=module執行, 並以pathToFileURL轉換src路徑, 避免專案路徑含非ASCII字元而無法import
 function runProc(tag, opt, mode, payload) {

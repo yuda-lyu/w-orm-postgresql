@@ -1,4 +1,3 @@
-import events from 'events'
 import pg from 'pg'
 import mongoSql from 'mongo-sql'
 import size from 'lodash-es/size.js'
@@ -20,6 +19,7 @@ import isint from 'wsemi/src/isint.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isDate from 'wsemi/src/isDate.mjs'
 import haskey from 'wsemi/src/haskey.mjs'
+import evem from 'wsemi/src/evem.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
 
 
@@ -173,8 +173,40 @@ function WOrmPostgresql(opt = {}) {
     let connectionString = `${url}/${db}`
     // console.log('connectionString', connectionString)
 
-    //ee
-    let ee = new events.EventEmitter()
+    //ee, 採eventemitter3而不採Node內建之events.EventEmitter,
+    //因後者於'error'無監聽者時會將錯誤直接拋出, 將使操作行為隨呼叫端是否註冊監聽而異
+    let ee = evem()
+
+    //getErrMsg, 取錯誤訊息字串, 供逐筆結果之err欄位與error事件使用
+    let getErrMsg = (err) => {
+        let m = get(err, 'message')
+        if (isestr(m)) {
+            return m
+        }
+        return String(err)
+    }
+
+    //emitChange, 資料實際異動成功後發出, 事件僅為附加通知不承擔回傳義務
+    //訂閱函數拋錯不得影響本次操作, 故一律以try/catch包覆, 收斂於此以免逐處遺漏
+    let emitChange = (mode, data, res) => {
+        try {
+            ee.emit('change', mode, data, res)
+        }
+        catch (errEmit) {
+            console.log(errEmit)
+        }
+    }
+
+    //emitError, 操作發生錯誤時發出, 錯誤訊息一律轉為字串
+    //正常結果(如查無數據、主鍵未命中、內容相同而未寫入)不得發出, 以免監聽者將常態當異常
+    let emitError = (mode, data, err) => {
+        try {
+            ee.emit('error', mode, data, getErrMsg(err))
+        }
+        catch (errEmit) {
+            console.log(errEmit)
+        }
+    }
 
     //PgClient
     let PgClient = pg.Client
@@ -252,6 +284,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('createTable', arr, res)
+
             return Promise.reject(res)
         }
 
@@ -302,6 +338,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('createTable', arr, res)
+
             return Promise.reject(res)
         }
 
@@ -346,6 +386,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出, 讀取函數無輸入數據故data為null
+            emitError('select', null, res)
+
             return Promise.reject(res)
         }
 
@@ -394,6 +438,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出, 讀取函數無輸入數據故data為null
+            emitError('select', null, res)
+
             return Promise.reject(res)
         }
 
@@ -452,6 +500,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出, 讀取函數無輸入數據故data為null
+            emitError('selectByPk', null, res)
+
             return Promise.reject(res)
         }
 
@@ -518,6 +570,11 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出, 讀取函數無輸入數據故data為null
+            //主鍵未命中與主鍵值無效皆為正常結果而不設isErr, 故不會誤發error
+            emitError('selectByPk', null, res)
+
             return Promise.reject(res)
         }
 
@@ -569,6 +626,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('insert', data, res)
+
             return Promise.reject(res)
         }
 
@@ -639,16 +700,15 @@ function WOrmPostgresql(opt = {}) {
 
         //emit
         if (!isErr) {
-            try {
-                ee.emit('change', 'insert', data, res)
-            }
-            catch (err) {
-                console.log(err)
-            }
+            emitChange('insert', data, res)
         }
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('insert', data, res)
+
             return Promise.reject(res)
         }
 
@@ -705,6 +765,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('save', data, res)
+
             return Promise.reject(res)
         }
 
@@ -970,6 +1034,16 @@ function WOrmPostgresql(opt = {}) {
 
                 }
 
+                //emit, 該筆經插入而產生者另發mode為insert之change事件, 供呼叫端區辨新增與更新
+                if (rest.nInserted === 1) {
+                    emitChange('insert', [v], rest)
+                }
+
+                //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
+                if (rest.ok === 0) {
+                    emitError('save', [v], rest.err)
+                }
+
                 return rest
             })
 
@@ -990,16 +1064,15 @@ function WOrmPostgresql(opt = {}) {
 
         //emit
         if (!isErr) {
-            try {
-                ee.emit('change', 'save', data, res)
-            }
-            catch (err) {
-                console.log(err)
-            }
+            emitChange('save', data, res)
         }
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('save', data, res)
+
             return Promise.reject(res)
         }
 
@@ -1048,6 +1121,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('del', data, res)
+
             return Promise.reject(res)
         }
 
@@ -1082,6 +1159,9 @@ function WOrmPostgresql(opt = {}) {
                         ok: 0,
                         err: `invalid ${pkName}[${pkv}]`,
                     }
+
+                    //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
+                    emitError('del', [v], rest.err)
 
                     return rest
                 }
@@ -1122,6 +1202,11 @@ function WOrmPostgresql(opt = {}) {
 
                     })
 
+                //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
+                if (rest.ok === 0) {
+                    emitError('del', [v], rest.err)
+                }
+
                 return rest
             })
 
@@ -1142,16 +1227,15 @@ function WOrmPostgresql(opt = {}) {
 
         //emit
         if (!isErr) {
-            try {
-                ee.emit('change', 'del', data, res)
-            }
-            catch (err) {
-                console.log(err)
-            }
+            emitChange('del', data, res)
         }
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('del', data, res)
+
             return Promise.reject(res)
         }
 
@@ -1190,6 +1274,10 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出, 無輸入數據故data為null
+            emitError('delAll', null, res)
+
             return Promise.reject(res)
         }
 
@@ -1253,16 +1341,15 @@ function WOrmPostgresql(opt = {}) {
 
         //emit
         if (!isErr) {
-            try {
-                ee.emit('change', 'delAll', null, res)
-            }
-            catch (err) {
-                console.log(err)
-            }
+            emitChange('delAll', null, res)
         }
 
         //check
         if (isErr) {
+
+            //emit, 整批性錯誤於reject之前發出
+            emitError('delAll', null, res)
+
             return Promise.reject(res)
         }
 
