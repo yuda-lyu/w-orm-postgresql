@@ -514,7 +514,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line330">line 330</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line387">line 387</a>
     </li></ul></dd>
     
 
@@ -771,7 +771,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1262">line 1262</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1344">line 1344</a>
     </li></ul></dd>
     
 
@@ -934,7 +934,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1423">line 1423</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1505">line 1505</a>
     </li></ul></dd>
     
 
@@ -1096,7 +1096,7 @@
 
     
 
-    <h4 class="name" id=".insert"><span class="type-signature type-signature-async, static">(async, static) </span>insert<span class="signature">(data)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id=".insert"><span class="type-signature type-signature-async, static">(async, static) </span>insert<span class="signature">(data, option<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -1107,15 +1107,19 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫</p>
-<p>n為輸入筆數，即本次嘗試插入之基準；nInserted為實際插入筆數，全數已存在而nInserted為0屬正常結果，
-不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
-因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。</p></li></ul></dd>
+<p>預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
+全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
+因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。</p>
+<p>option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
+而非僅知[有幾筆]。各元素之n恆為1、ok恆為1，因insert之任何錯誤皆屬整批性錯誤而reject，
+故逐筆元素不出現ok:0與err；同批含重複主鍵者以首次出現者之nInserted為1，其餘為0。
+兩種取值下之不變式為陣列長度等於輸入筆數，且nInserted為1者之筆數等於聚合模式之nInserted。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line666">line 666</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line731">line 731</a>
     </li></ul></dd>
     
 
@@ -1175,7 +1179,11 @@
         <th>Type</th>
 
         
+        <th>Attributes</th>
+        
 
+        
+        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -1204,10 +1212,132 @@
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入數據物件或陣列</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>option</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入設定物件，預設為{}</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>returnList</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入是否改回傳逐筆結果陣列，預設為false</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
         </tr>
 
     
@@ -1233,7 +1363,8 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳插入結果物件{n,nInserted,ok}，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve於returnList為false時回傳插入結果物件{n,nInserted,ok}，
+為true時回傳逐筆結果陣列[{n,nInserted,ok}]，reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1282,7 +1413,7 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line784">line 784</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line865">line 865</a>
     </li></ul></dd>
     
 
@@ -1450,7 +1581,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line903">line 903</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line985">line 985</a>
     </li></ul></dd>
     
 
@@ -1737,7 +1868,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line430">line 430</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line487">line 487</a>
     </li></ul></dd>
     
 
@@ -1958,7 +2089,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line533">line 533</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line590">line 590</a>
     </li></ul></dd>
     
 
@@ -2121,7 +2252,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 11:51:27 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 17 2026 18:44:49 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
