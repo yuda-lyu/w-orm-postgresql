@@ -11,6 +11,36 @@ An operator for postgresql in nodejs.
 ## Documentation
 To view documentation or get support, visit [docs](https://yuda-lyu.github.io/w-orm-postgresql/WOrm.html).
 
+## Conditions (`find`) and `order`
+`select(find, order)` and `delAll(find)` take a MongoDB-style condition object and translate it to SQL through [mongo-sql](https://github.com/goodybag/mongo-sql). The condition is validated against a whitelist first (the same check for both functions, so a `find` that selects rows is the `find` that deletes them). **Anything outside the whitelist is rejected** with an `Error` (`invalid find: <reason> at [<path>]`) before any query is sent, an `error` event is emitted, and no row is touched. Nothing is silently ignored.
+
+| Level | Supported |
+|---|---|
+| document | column names, `$and`, `$or` (non-empty arrays of non-empty conditions; an empty `{}` inside `$and` is ignored) |
+| column | `$equals` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$nin` `$not` `$like` `$ilike` `$null` `$notNull`; a plain value is equality, `null` is `is null` |
+| value | string, finite number, boolean, bigint, valid `Date`, `Buffer`, `null` (only for equality, `$ne`, and elements of `$in`/`$nin`) |
+| column name | identifier (`[letters_][letters digits _]*`, at most 63 bytes), JSON path key for jsonb columns (`js->>name`, `js->a->>b`, `js#>>name`), and one trailing cast (`ts::date`) on identifiers |
+
+```alias
+await wo.select({ $and: [{ value: { $gt: 123 } }, { name: { $in: ['peter', 'kettle'] } }] })
+await wo.select({ 'meta->>city': 'Taipei' }, { time: 'desc' }) //jsonb column and order
+await wo.delAll({ name: 'peter' }) //an empty or missing find deletes all rows: delAll() or delAll({})
+```
+
+Rejected, among others: `undefined` anywhere (drop the key instead), `$nor`, `$regex`, `$options`, `$eq`, `$exists`, `$custom`, sub-queries, empty `$and`/`$or`, `$nin: []`, an empty `$in` inside `$not`, `$nin` that mixes `null` with other values (use `{ $nin: [...], $notNull: true }`), `NaN`, `RegExp`, `Map`, nested non-operator keys, column names with quotes, dots or spaces, and strings that start and end with `$` (mongo-sql treats them as column references; to compare with such a string use `{ col: { $in: ['$x$'] } }`).
+
+- Comparison follows SQL three-valued logic: `$ne`, `$nin` and `$not` do not match rows whose column is `NULL`. `{ $in: [] }` matches nothing. `$like`/`$ilike` use SQL wildcards `%` and `_`.
+- The existence of a column is checked by PostgreSQL, not by the validator.
+- `order` is an object of `column: 'asc' | 'desc'` (optionally followed by `nulls first|last`); strings, arrays, `1`/`-1` and anything else are rejected.
+- The top-level `find` must be omitted (`undefined`) or a plain object; both `undefined` and `{}` mean all rows. Any other top-level value (`null`, an array including `[]` and `[{...}]`, a string, a number, a boolean, a function, `Date`, `RegExp`, `Map`, `Set`, a class instance, ...) is rejected as a whole and is never treated as `{}`, so `delAll(null)` and `delAll([])` delete nothing. (Breaking change: they used to delete all rows.)
+- A primary-key value is valid only if it is a non-empty string, a finite number, a boolean or a plain valid `Date`. A string that starts and ends with `$`, contains NUL or a lone surrogate (UTF-8 would turn it into U+FFFD and match another row), a wrapper object (`Object(5)`), an invalid `Date` and a `Date` that carries own properties or a subclass are invalid: `selectByPk` returns `null`, `del`/`save` report `ok: 0` per record, and `insert`/`insertBulk`/`save` reject the whole batch before writing.
+- The primary key of a record is read only from its own enumerable properties. A key that exists only on the prototype (a class getter, `Object.create({ time: 1 })`, a polluted `Object.prototype.time`) counts as a missing key: `del` reports `ok: 0` for that record, and `insert`/`insertBulk`/`save` reject the whole batch before writing. (Breaking change: they used to read the inherited value and act on the row it points to.)
+- `opt.pk` must be a plain identifier (letters including non-ASCII ones, digits, underscore, not starting with a digit, at most 63 bytes, not `Infinity`); `WOrmPostgresql(opt)` throws `invalid opt.pk` otherwise (this includes names with `$`, which used to work).
+- Every statement (select, delete, insert, update and `createTable`) is sent with the extended query protocol and a null-prototype query config, so a statement can never be stacked behind another one and a polluted `Object.prototype` cannot change how `pg` runs a query. Column, primary-key and table names that are put into SQL text are always double-quoted, so they are case-sensitive and must match the column exactly.
+- `createTable(cl, pk, sample)` checks the table name, `pk` and every key of the sample object before sending anything: keys and `pk` must be plain identifiers (as for `find`; `$`, spaces, quotes, dots, over 63 bytes and `Infinity` are rejected), the sample must have at least one own key, and a table name must be a plain name (letters, digits, `_`, `$`, up to 63 bytes), a schema-qualified name (`schema.table`) or a fully double-quoted name; anything else (including DDL fragments such as `IF NOT EXISTS t`) is rejected with `invalid createTable: ...`. Column names are created case-sensitively (`{ userName: 'x' }` creates `"userName"`, which is what `insert`/`save`/`select` use; it used to be folded to `username`, so give the sample lowercase keys if your data uses lowercase keys, and write `{ userName: 'x' }` instead of `{ '"userName"': 'x' }`). A fully double-quoted table name can be created and written by `insert`, but the other functions cannot query it as `opt.cl`; use the bare name.
+- `insert`/`insertBulk` reject a data key (with a value other than `undefined`) that contains NUL or a lone surrogate with `invalid data key`; for `save` that record fails with `ok: 0`. In `save` (with `autoInsert: true`) a key whose value is `undefined` is ignored and the stored column is kept, the same as with `autoInsert: false`.
+- Object values written by `insert`, `insertBulk` and `save` are stored as JSON (a value such as `{ type: 'Point', coordinates: [1, 2] }` is stored as is). `save(data, { autoInsert: false })` updates with bound parameters, and its data keys must be plain column names.
+
 ## Installation
 
 ### Using npm(ES6 module):

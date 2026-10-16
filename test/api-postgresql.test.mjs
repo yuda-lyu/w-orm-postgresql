@@ -1,134 +1,38 @@
 import assert from 'assert'
-import net from 'net'
 import path from 'path'
-import pg from 'pg'
-import { execFile, spawn } from 'child_process'
-import { promisify } from 'util'
+import { spawn } from 'child_process'
 import isarr from 'wsemi/src/isarr.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
+import { startPg, stopPg } from './tools/pgContainer.mjs'
 
 
-//測試自行創建docker容器供PostgreSQL服務, 測試結束即銷毀, 故僅需環境已安裝docker
+//測試自行創建docker容器供PostgreSQL服務(啟停共用test/tools/pgContainer.mjs), 測試結束即銷毀, 故僅需環境已安裝docker
+//mocha --parallel時各測試檔各起容器, 容器名須各異
 
-
-let execFileAsync = promisify(execFile)
 
 let ctName = 'worm-test-postgresql'
-let ctImage = 'postgres:17-alpine'
-let ctUser = 'username'
-let ctPassword = 'password'
-let ctDb = 'worm'
-let ctPort = null //容器對外埠, 由getFreePort動態取得, 避免與既有PostgreSQL服務搶5432
-
-
-let delay = (ms) => {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms)
-    })
-}
-
-//getFreePort, 由系統配發空閒埠
-let getFreePort = () => {
-    return new Promise((resolve, reject) => {
-        let srv = net.createServer()
-        srv.on('error', reject)
-        srv.listen(0, () => {
-            let port = srv.address().port
-            srv.close(() => {
-                resolve(port)
-            })
-        })
-    })
-}
-
-//docker, 以陣列傳參不經shell, 避免路徑與引號轉譯問題
-let docker = (args) => {
-    return execFileAsync('docker', args)
-}
-
-//genUrl
-let genUrl = () => {
-    return `postgresql://${ctUser}:${ctPassword}@127.0.0.1:${ctPort}`
-}
+let ct = null //容器連線資訊{url,db,port}, 由startPg取得
 
 //genOpt
 let genOpt = (cl = 'users', useCache = false) => {
     return {
-        url: genUrl(),
-        db: ctDb,
+        url: ct.url,
+        db: ct.db,
         cl,
         useCache,
     }
 }
 
-//probeReady, 以pg直連容器對外埠試跑SELECT 1
-//不使用容器內pg_isready, 因postgres映像初始化期間會先啟動僅監聽unix socket之臨時服務,
-//pg_isready預設亦走unix socket故會提早回報就緒, 直連TCP方為測試實際所走路徑
-let probeReady = async () => {
-    let client = new pg.Client({ connectionString: `${genUrl()}/${ctDb}` })
-    let ok = false
-    try {
-        await client.connect()
-        await client.query('SELECT 1')
-        ok = true
-    }
-    catch (err) {
-        ok = false
-    }
-    finally {
-        await client.end().catch(() => {})
-    }
-    return ok
-}
-
-//startContainer, 創建容器並等待服務就緒
-//postgres映像以POSTGRES_USER、POSTGRES_PASSWORD、POSTGRES_DB即建妥帳號與資料庫, 無須另跑建置語句
-let startContainer = async () => {
-
-    //check docker
-    await docker(['version', '--format', '{{.Server.Version}}'])
-        .catch(() => {
-            throw new Error('需先安裝並啟動docker才能執行postgresql測試')
-        })
-
-    //清除前次殘留容器
-    await docker(['rm', '-f', ctName]).catch(() => {})
-
-    //run
-    ctPort = await getFreePort()
-    await docker(['run', '-d', '--rm', '--name', ctName, '-e', `POSTGRES_USER=${ctUser}`, '-e', `POSTGRES_PASSWORD=${ctPassword}`, '-e', `POSTGRES_DB=${ctDb}`, '-p', `${ctPort}:5432`, ctImage])
-
-    //等待服務就緒, 首次需拉取映像故給予較長時間
-    let ready = false
-    for (let i = 0; i < 90; i++) {
-        let ok = await probeReady()
-        if (ok) {
-            ready = true
-            break
-        }
-        await delay(2000)
-    }
-    if (!ready) {
-        throw new Error('postgresql容器啟動逾時')
-    }
-
-}
-
-//stopContainer, 銷毀容器
-let stopContainer = async () => {
-    await docker(['rm', '-f', ctName]).catch(() => {})
-}
-
 
 before(async function() {
     this.timeout(600000) //含拉取映像與服務啟動
-    await startContainer()
+    ct = await startPg(ctName)
 })
 
 after(async function() {
     this.timeout(120000)
-    await stopContainer()
+    await stopPg(ctName)
 })
 
 
