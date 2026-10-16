@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dateTimeOf">dateTimeOf</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isBufferValue">isBufferValue</a></li><li><a href="global.html#isCleanStr">isCleanStr</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isDateValue">isDateValue</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li></ul>
     
 </nav>
 
@@ -77,7 +77,9 @@
     <dd class="tag-description"><ul class="dummy"><li><p>操作資料庫(PostgreSQL)</p>
 <p>本套件之主鍵欄位由opt.pk指定，預設為time，select以外之五函數皆以此欄位認定主鍵。
 因主鍵得為承載業務語義之欄位(如時序資料之觀測時間)，insert與save於輸入未帶有效主鍵值時不自動補值，
-一律以reject回報；del亦不補值，該筆回ok:0與err。</p></li></ul></dd>
+一律以reject回報；del亦不補值，該筆回ok:0與err。
+數據之主鍵只讀自有可列舉屬性，僅存在於原型(類別getter、Object.create之原型、被汙染之Object.prototype)者視為缺主鍵。
+資料表、欄位與主鍵名放進SQL時一律加雙引號(區分大小寫)，須與資料庫內名稱逐字相同。</p></li></ul></dd>
     
 
     
@@ -375,7 +377,7 @@
                 </td>
             
 
-            <td class="description last"><p>輸入主鍵欄位名字串，預設'time'</p></td>
+            <td class="description last"><p>輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)，不合者建構拋出Error('invalid opt.pk')，預設'time'</p></td>
         </tr>
 
     
@@ -508,13 +510,16 @@
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>創建資料表
 註: pk未給時採建構時之opt.pk。因insert與save倚賴主鍵之唯一約束達成原子性，
-若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值</p></li></ul></dd>
+若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值。
+表名、主鍵名與數據物件之鍵於送出任何語句之前先檢核：鍵與pk須為識別字，表名須為一般名稱、schema.table或完整雙引號名稱，
+不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值)；表名與欄名一律加雙引號，故區分大小寫
+(如{userName:1}建出欄userName，與insert、save、select所用之引用一致，不折為小寫)。DDL以extended協定送出，不可堆疊第二語句。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line387">line 387</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line487">line 487</a>
     </li></ul></dd>
     
 
@@ -771,7 +776,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1344">line 1344</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1519">line 1519</a>
     </li></ul></dd>
     
 
@@ -928,13 +933,17 @@
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表</p>
 <p>n與nDeleted皆為實際刪除筆數，不取全表筆數。find未給或為空物件時刪除全部數據，
-條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。</p></li></ul></dd>
+條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
+find經與select共用之白名單檢核(支援範圍見select)，不支援或無法轉譯者(如含undefined、$nor、$regex、空清單)
+於送出任何語句之前reject(訊息為invalid find: 原因 at [路徑])且不刪除任何數據，同一find於select命中之數據即本函數刪除之數據。
+頂層find僅接受未給(undefined)與一般物件({}為全部); null、陣列(含[]與[{...}])、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等
+非條件物件之值一律整批reject(不視為{}，不刪除任何數據)。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1505">line 1505</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1690">line 1690</a>
     </li></ul></dd>
     
 
@@ -1109,7 +1118,8 @@
     <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫</p>
 <p>預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
 全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
-因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。</p>
+因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串不是有效主鍵值(mongo-sql視為欄引用)。
+INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。</p>
 <p>option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
 而非僅知[有幾筆]。各元素之n恆為1、ok恆為1，因insert之任何錯誤皆屬整批性錯誤而reject，
 故逐筆元素不出現ok:0與err；同批含重複主鍵者以首次出現者之nInserted為1，其餘為0。
@@ -1119,7 +1129,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line731">line 731</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line857">line 857</a>
     </li></ul></dd>
     
 
@@ -1413,7 +1423,7 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line865">line 865</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line992">line 992</a>
     </li></ul></dd>
     
 
@@ -1569,7 +1579,10 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>儲存數據，以主鍵為準更新既有數據，未給之欄位保留</p>
-<p>回傳陣列恆與輸入等長，輸入單一物件亦回傳長度1之陣列。
+<p>INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。
+未開啟autoInsert時以手寫參數化UPDATE更新，所有值皆以綁定參數送出($..$字串亦為字面值)，
+且資料鍵須為識別字(含$inc、$custom、引號、點、空白者於任何寫入之前整批reject)。
+回傳陣列恆與輸入等長，輸入單一物件亦回傳長度1之陣列。
 各筆之n為主鍵命中筆數，值為0或1，命中(不論內容有無變更)或經插入而產生皆為1；
 nInserted與nModified恆同時出現，無對應行為時填0。
 [內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
@@ -1581,7 +1594,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line985">line 985</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1116">line 1116</a>
     </li></ul></dd>
     
 
@@ -1862,13 +1875,23 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>查詢數據</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>查詢數據</p>
+<p>find先經白名單檢核(與delAll共用同一檢核)，不支援或無法轉譯者一律reject(訊息為invalid find: 原因 at [路徑])，不靜默忽略。
+支援: 欄名鍵、$and、$or(非空陣列)；欄位層$equals、$ne、$gt、$gte、$lt、$lte、$in、$nin、$not、$like、$ilike、$null、$notNull；
+欄位直給純量即等值，null即is null；欄名可為識別字、JSONB取值鍵(js-&gt;&gt;name)與單一末尾轉型(ts::date)。
+值可為字串(首尾皆$者不可，比對時改用$in)、有限數值、布林、bigint、有效Date、Buffer。
+不支援(reject)如: undefined、$nor、$regex、$exists、$custom、子查詢、$nin:[]、空物件、NaN、RegExp、含引號或點之欄名。
+比對依SQL三值邏輯，$ne、$nin、$not不含NULL列；欄位是否存在由PostgreSQL檢核。
+頂層find僅接受未給(undefined)與一般物件({}為全部); null、陣列(含[]與[{...}])、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等
+非條件物件之值一律reject(不視為{})。
+order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
+詳見README與CLAUDE_rulebook.md〈條件(find)之支援範圍〉。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line487">line 487</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line598">line 598</a>
     </li></ul></dd>
     
 
@@ -1977,7 +2000,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
                 </td>
             
 
-            <td class="description last"><p>輸入查詢條件物件</p></td>
+            <td class="description last"><p>輸入查詢條件物件，未給或空物件為全部</p></td>
         </tr>
 
     
@@ -2089,7 +2112,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line590">line 590</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line715">line 715</a>
     </li></ul></dd>
     
 
@@ -2252,7 +2275,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Oct 11 2026 13:58:39 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sat Oct 17 2026 02:35:28 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
