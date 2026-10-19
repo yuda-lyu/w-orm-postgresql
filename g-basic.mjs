@@ -244,8 +244,12 @@ async function test() {
     let spc = await wo.select({ '$or': [{ '$and': [{ value: { '$ne': 123 } }, { value: { '$in': [123, 321, 123.456, 456] } }, { value: { '$nin': [456, 654] } }] }, { '$or': [{ value: { '$lte': -1 } }, { value: { '$gte': 400 } }] }] })
     console.log('select by $or, $and, $ne, $in, $nin', spc)
 
-    // //select by regex
-    // let sr = await wo.select({ name: { $regex: 'PeT', $options: '$i' } })
+    //select by $eq, $ne (series whitelist: $eq $ne $gt $gte $lt $lte $in $nin, $and, $or)
+    let spd = await wo.select({ name: { '$eq': 'rosemary' }, value: { '$ne': 123 } })
+    console.log('select by $eq, $ne', spd)
+
+    // //select by regex is outside the series whitelist and is rejected as invalid find ($regex, $like, $not, JSON path keys, ...): filter the rows in memory after select
+    // let sr = await wo.select({ name: { $regex: 'PeT', $options: 'i' } })
     // console.log('selectReg', sr)
 
     //save
@@ -445,6 +449,11 @@ test()
 //     name: 'kettle(modify)',
 //     value: 447
 //   }
+// ]
+// select by $eq, $ne [
+//   { time: 2025-01-01T00:01:00.000Z, name: 'rosemary', value: 123.456 },
+//   { time: 2025-01-01T00:04:00.000Z, name: 'rosemary', value: 123.1236 },
+//   { time: 2025-01-01T00:07:00.000Z, name: 'rosemary', value: 124.76 }
 // ]
 // change insert
 // change save

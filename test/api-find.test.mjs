@@ -14,6 +14,8 @@ import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 //  S6 以主鍵值構成之條件(selectByPk, del, save)不得因主鍵值為 $..$ 字串而命中全部
 //  S7 order 僅接受 asc/desc(可接 nulls first/last)
 //  S8 useCache 下檢核不被快取繞過, 快取鍵不因不同型別之值而混同
+//  S9–S14(第 33 項批 1, 系列條件白名單): 形狀檢核由 wsemi cvOrmFind 擁有(R11), 案例表逐案測試在 api-find-whitelist.test.mjs;
+//  本檔保留 pg 專屬案(布林 $ne 三值 S12, 首尾 $ 字串 S13, JSON/轉型鍵移除 S14, 63 bytes 欄名, $nin 表名, 快取, 敵意輸入)
 
 
 let ctName = 'worm-test-postgresql-find'
@@ -73,7 +75,11 @@ describe('find: supported operators (S1 S4)', function() {
     //命中集合由 SEED 以獨立之 SQL 三值述語推得(比較不含 NULL 列), 非取自被測實作
     let oks = [
         ['eq string', () => ({ name: 'aa' }), (r) => r.name === 'aa'],
-        ['$equals', () => ({ name: { $equals: 'aa' } }), (r) => r.name === 'aa'],
+        ['$eq', () => ({ name: { $eq: 'aa' } }), (r) => r.name === 'aa'],
+        ['$eq null', () => ({ tag: { $eq: null } }), (r) => r.tag === null],
+        ['$eq number', () => ({ value: { $eq: 5 } }), (r) => r.value === 5],
+        ['$eq true', () => ({ ok: { $eq: true } }), (r) => r.ok === true],
+        ['$eq + $ne on one column', () => ({ value: { $eq: 5, $ne: 4 } }), (r) => r.value === 5],
         ['$ne (excludes NULL)', () => ({ name: { $ne: 'aa' } }), (r) => nn(r.name) && r.name !== 'aa'],
         ['$gt', () => ({ value: { $gt: 5 } }), (r) => r.value > 5],
         ['$gte', () => ({ value: { $gte: 5 } }), (r) => r.value >= 5],
@@ -81,34 +87,43 @@ describe('find: supported operators (S1 S4)', function() {
         ['$lte', () => ({ value: { $lte: 3 } }), (r) => r.value <= 3],
         ['$gt+$lt', () => ({ value: { $gt: 2, $lt: 6 } }), (r) => r.value > 2 && r.value < 6],
         ['$in', () => ({ value: { $in: [1, 2] } }), (r) => [1, 2].includes(r.value)],
-        ['$in with null', () => ({ tag: { $in: ['x', null] } }), (r) => r.tag === 'x' || r.tag === null],
-        ['$in [null]', () => ({ tag: { $in: [null] } }), (r) => r.tag === null],
         ['$in [] is constant false', () => ({ value: { $in: [] } }), () => false],
         ['$in literal $..$ string', () => ({ name: { $in: ['$name$'] } }), (r) => r.name === '$name$'],
         ['$nin (excludes NULL)', () => ({ tag: { $nin: ['x'] } }), (r) => nn(r.tag) && r.tag !== 'x'],
-        ['$nin [null]', () => ({ tag: { $nin: [null] } }), (r) => nn(r.tag)],
-        ['$nin with $notNull (replacement of $nin mixing null)', () => ({ tag: { $nin: ['x'], $notNull: true } }), (r) => nn(r.tag) && r.tag !== 'x'],
-        ['$not scalar', () => ({ name: { $not: 'aa' } }), (r) => nn(r.name) && r.name !== 'aa'],
-        ['$not operator object', () => ({ value: { $not: { $gt: 5 } } }), (r) => !(r.value > 5)],
-        ['$like', () => ({ name: { $like: 'a%' } }), (r) => nn(r.name) && r.name.startsWith('a')],
-        ['$ilike', () => ({ name: { $ilike: 'a%' } }), (r) => nn(r.name) && r.name.toLowerCase().startsWith('a')],
-        ['$null true', () => ({ tag: { $null: true } }), (r) => r.tag === null],
-        ['$null false', () => ({ tag: { $null: false } }), (r) => nn(r.tag)],
-        ['$notNull true', () => ({ tag: { $notNull: true } }), (r) => nn(r.tag)],
-        ['$notNull false', () => ({ tag: { $notNull: false } }), (r) => r.tag === null],
+        ['portable: exclude NULL with $and of $ne null', () => ({ $and: [{ tag: { $ne: null } }, { tag: { $ne: 'x' } }] }), (r) => nn(r.tag) && r.tag !== 'x'],
+        ['portable: include NULL with $or of null', () => ({ $or: [{ tag: null }, { tag: { $ne: 'x' } }] }), (r) => r.tag === null || r.tag !== 'x'],
         ['eq null', () => ({ tag: null }), (r) => r.tag === null],
         ['$ne null', () => ({ tag: { $ne: null } }), (r) => nn(r.tag)],
         ['eq boolean', () => ({ ok: true }), (r) => r.ok === true],
-        ['$ne true (IS NOT TRUE includes NULL)', () => ({ ok: { $ne: true } }), (r) => r.ok !== true],
-        ['eq bigint', () => ({ time: 3n }), (r) => r.time === 3],
+        //布林 $ne 為 SQL 三值(S12): 不含 NULL 列(原 IS NOT TRUE / IS NOT FALSE 含 NULL 列)
+        ['$ne true (SQL three-valued, excludes NULL)', () => ({ ok: { $ne: true } }), (r) => r.ok === false],
+        ['$ne false (SQL three-valued, excludes NULL)', () => ({ ok: { $ne: false } }), (r) => r.ok === true],
+        ['$eq false + $ne true (both mean ok is false)', () => ({ ok: { $eq: false, $ne: true } }), (r) => r.ok === false],
+        ['$eq true + $ne true (contradiction, empty set)', () => ({ ok: { $eq: true, $ne: true } }), () => false],
+        //首尾皆 $ 之字串為字面值(S13): 等值、$eq、$ne 改以 $in/$nin 送出
+        ['eq "$name$" string (literal)', () => ({ name: '$name$' }), (r) => r.name === '$name$'],
+        ['$eq "$name$" string (literal)', () => ({ name: { $eq: '$name$' } }), (r) => r.name === '$name$'],
+        ['$ne "$name$" string (literal, excludes NULL)', () => ({ name: { $ne: '$name$' } }), (r) => nn(r.name) && r.name !== '$name$'],
+        ['$eq "$name$" + $in with same operator slot', () => ({ name: { $eq: '$name$', $in: ['$name$', 'aa'] } }), (r) => r.name === '$name$'],
+        ['$ne "$name$" + $nin with same operator slot', () => ({ name: { $ne: '$name$', $nin: ['aa'] } }), (r) => nn(r.name) && r.name !== '$name$' && r.name !== 'aa'],
+        //反序之碰撞: 先到者占位, 後到者併入 $and(不得靜默覆蓋或丟棄)
+        ['$ne true then $eq true (contradiction, empty set)', () => ({ ok: { $ne: true, $eq: true } }), () => false],
+        ['$ne true then $eq false (same meaning)', () => ({ ok: { $ne: true, $eq: false } }), (r) => r.ok === false],
+        ['$ne false then $eq false (contradiction, empty set)', () => ({ ok: { $ne: false, $eq: false } }), () => false],
+        ['$nin then $ne "$name$"', () => ({ name: { $nin: ['aa'], $ne: '$name$' } }), (r) => nn(r.name) && r.name !== 'aa' && r.name !== '$name$'],
+        ['$in then $eq "$name$" (the $eq goes to $and)', () => ({ name: { $in: ['aa', '$name$'], $eq: '$name$' } }), (r) => r.name === '$name$'],
+        ['collision inside an $or element beside a user $and', () => ({ $or: [{ ok: { $ne: true, $eq: false }, $and: [{ value: { $lt: 5 } }] }, { value: 10 }] }), (r) => (r.ok === false && r.value < 5) || r.value === 10],
+        ['collision beside a user $or (the moved condition must not join the $or)', () => ({ ok: { $eq: true, $ne: true }, $or: [{ value: 1 }, { value: 2 }] }), () => false],
+        ['collision beside a user $or (same meaning)', () => ({ ok: { $eq: true, $ne: false }, $or: [{ value: 1 }, { value: 2 }] }), (r) => r.ok === true && (r.value === 1 || r.value === 2)],
+        ['two columns collide independently', () => ({ ok: { $eq: false, $ne: true }, name: { $eq: '$name$', $in: ['aa', '$name$'] } }), (r) => r.ok === false && r.name === '$name$'],
+        ['eq "$" string (literal)', () => ({ name: '$' }), () => false],
+        ['"$name$" string beside other columns and $or', () => ({ name: '$name$', $or: [{ value: 6 }, { value: 99 }] }), (r) => r.name === '$name$' && (r.value === 6 || r.value === 99)],
         ['$and', () => ({ $and: [{ value: { $gt: 2 } }, { value: { $lt: 6 } }] }), (r) => r.value > 2 && r.value < 6],
         ['$or', () => ({ $or: [{ value: { $lte: 1 } }, { value: { $gte: 10 } }] }), (r) => r.value <= 1 || r.value >= 10],
         ['README nested $or/$and', () => ({ $or: [{ $and: [{ value: { $ne: 4 } }, { value: { $in: [4, 5, 6] } }, { value: { $nin: [6, 7] } }] }, { $or: [{ value: { $lte: -1 } }, { value: { $gte: 10 } }] }] }), (r) => (r.value !== 4 && [4, 5, 6].includes(r.value) && ![6, 7].includes(r.value)) || r.value <= -1 || r.value >= 10],
-        ['$and with {} element (constant true)', () => ({ $and: [{ name: 'aa' }, {}] }), (r) => r.name === 'aa'],
         ['multi columns AND', () => ({ name: 'aa', value: { $gt: 1 } }), (r) => r.name === 'aa' && r.value > 1],
         ['column + $or', () => ({ name: 'aa', $or: [{ value: 1 }, { value: 4 }] }), (r) => r.name === 'aa' && (r.value === 1 || r.value === 4)],
-        ['JSON path key', () => ({ 'js->>k': '1' }), (r) => r.js !== null && r.js.k === 1],
-        ['cast key', () => ({ 'value::text': '5' }), (r) => r.value === 5],
+        ['numeric string for numeric column (PG converts by column type)', () => ({ value: '5' }), (r) => r.value === 5],
         ['{} is all (explicit)', () => ({}), () => true],
         ['undefined is all (explicit)', () => undefined, () => true],
     ]
@@ -173,7 +188,54 @@ describe('find: unsupported or untranslatable must reject (S2 S3 S5)', function(
         ['$custom_object', () => ({ value: { $custom_object: { value: 'true', values: [] } } })],
         ['top-level $custom', () => ({ $custom: ['true'] })],
         ['$years_ago', () => ({ value: { $years_ago: 1 } })],
-        ['$eq', () => col({ $eq: 'aa' })],
+        //第 33 項批 1 自白名單移除之運算子(R11, S9): 原可用, 今 reject
+        ['$equals (alias removed, use $eq)', () => col({ $equals: 'aa' })],
+        ['$like (removed)', () => col({ $like: 'a%' })],
+        ['$ilike (removed)', () => col({ $ilike: 'a%' })],
+        ['$null true (removed)', () => ({ tag: { $null: true } })],
+        ['$null false (removed)', () => ({ tag: { $null: false } })],
+        ['$notNull true (removed)', () => ({ tag: { $notNull: true } })],
+        ['$notNull false (removed)', () => ({ tag: { $notNull: false } })],
+        ['$not scalar (removed)', () => col({ $not: 'aa' })],
+        ['$not operator object (removed)', () => ({ value: { $not: { $gt: 5 } } })],
+        ['$not $in (removed)', () => ({ name: { $not: { $in: ['aa', 'bb'] } } })],
+        ['$in with null (removed)', () => ({ tag: { $in: ['x', null] } })],
+        ['$in [null] (removed)', () => ({ tag: { $in: [null] } })],
+        ['$nin [null] (removed)', () => ({ tag: { $nin: [null] } })],
+        ['$nin with $notNull (removed)', () => ({ tag: { $nin: ['x'], $notNull: true } })],
+        ['bigint value (removed)', () => ({ time: 3n })],
+        ['bigint in $in (removed)', () => ({ time: { $in: [3n] } })],
+        ['bigint in $gt (removed)', () => ({ time: { $gt: 3n } })],
+        ['Buffer value (removed)', () => ({ name: Buffer.from('aa') })],
+        ['Buffer in $in (removed)', () => ({ name: { $in: [Buffer.from('aa')] } })],
+        ['$and with {} element (removed: was dropped as constant true)', () => ({ $and: [{ name: 'aa' }, {}] })],
+        ['$and with {} first (removed)', () => ({ $and: [{}, { name: 'aa' }] })],
+        ['JSON path ->> (removed)', () => ({ 'js->>k': '1' })],
+        ['JSON path -> (removed)', () => ({ 'js->k': '1' })],
+        ['JSON path #>> (removed)', () => ({ 'js#>>k': '1' })],
+        ['JSON path #> (removed)', () => ({ 'js#>k': '1' })],
+        ['JSON path multi (removed)', () => ({ 'js->k->>k': '1' })],
+        ['JSON path array index (removed)', () => ({ 'js->>0': '1' })],
+        ['JSON path with $nin (removed)', () => ({ 'js->>k': { $nin: ['1'] } })],
+        ['cast key (removed)', () => ({ 'value::text': '5' })],
+        ['cast key with operator (removed)', () => ({ 'value::text': { $gte: '5' } })],
+        //首尾皆 $ 之字串於比較運算子(pg 專屬限制)
+        ['"$name$" string in $gt', () => col({ $gt: '$name$' })],
+        ['"$name$" string in $gte', () => col({ $gte: '$name$' })],
+        ['"$name$" string in $lt', () => col({ $lt: '$name$' })],
+        ['"$name$" string in $lte', () => col({ $lte: '$name$' })],
+        //共用層上限(wsemi 預設): $and/$or 1000、$in/$nin 10000、欄名 128、pg 欄名 63 bytes、綁定參數 65535
+        ['$or with 1001 elements', () => ({ $or: Array.from({ length: 1001 }, (_, i) => ({ value: i })) })],
+        ['$and with 1001 elements', () => ({ $and: Array.from({ length: 1001 }, (_, i) => ({ value: { $ne: i } })) })],
+        ['$in with 10001 elements', () => ({ value: { $in: Array.from({ length: 10001 }, (_, i) => i) } })],
+        ['$nin with 10001 elements', () => ({ value: { $nin: Array.from({ length: 10001 }, (_, i) => i) } })],
+        ['column name of 129 chars', () => ({ ['c'.repeat(129)]: 1 })],
+        ['bound parameters over 65535 (7 x $in of 10000)', () => ({ $or: Array.from({ length: 7 }, (_, k) => ({ value: { $in: Array.from({ length: 10000 }, (_, i) => i + k * 10000) } })) })],
+        //原型被改為 null 之內建品牌物件(頂層與非頂層), 頂層 Proxy 空物件(空即全部須為可證明之真實空物件)
+        ['top Map with null prototype', () => Object.setPrototypeOf(new Map([['name', 'aa']]), null)],
+        ['top Set with Object.prototype', () => Object.setPrototypeOf(new Set(['aa']), Object.prototype)],
+        ['Map with null prototype and own key inside $or', () => ({ $or: [Object.assign(Object.setPrototypeOf(new Map(), null), { name: 'aa' })] })],
+        ['top empty Proxy', () => new Proxy({}, {})],
         ['$where', () => ({ $where: 'this.value>1' })],
         ['$expr', () => ({ $expr: { $gt: ['$value', 1] } })],
         ['$jsonSchema {}', () => ({ $jsonSchema: {} })],
@@ -220,9 +282,6 @@ describe('find: unsupported or untranslatable must reject (S2 S3 S5)', function(
         ['Number wrapper', () => col(Object(5))],
         ['lone surrogate string', () => col('\ud800')],
         ['NUL string', () => col('a\u0000b')],
-        ['"$name$" string (column reference in mongo-sql)', () => col('$name$')],
-        ['"$" string', () => col('$')],
-        ['"$$" string', () => col({ $ne: '$$' })],
         ['null for $gt', () => ({ value: { $gt: null } })],
         ['null for $lte', () => ({ value: { $lte: null } })],
         ['null for $like', () => col({ $like: null })],
@@ -488,21 +547,32 @@ describe('find: useCache (S8)', function() {
         let r = await settle(wo.select({ name: undefined })) //JSON.stringify 後與 {} 同鍵
         assert.strictEqual(r.ok, false) //S8
     })
-    it('should not mix results of $in [null] with invalid $in [undefined] in cache', async function() {
+    it('should not mix results of {name: null} with invalid $in [undefined] in cache', async function() {
         await reset()
         let wo = mk({ useCache: true })
         let a = await settle(wo.select({ name: { $in: [undefined] } }))
         assert.strictEqual(a.ok, false)
-        let b = await wo.select({ name: { $in: [null] } })
+        let b = await wo.select({ name: null })
         assert.deepStrictEqual(b.map((x) => x.time), [5]) //S8
     })
-    it('should resolve bigint find with cache on (no TypeError from JSON.stringify)', async function() {
+    it('should reject a bigint find with cache on as invalid find (no TypeError from JSON.stringify), also after a valid cached query', async function() {
         await reset()
         let wo = mk({ useCache: true })
-        let b = await wo.select({ time: 3n })
+        let b = await wo.select({ time: 3 })
         assert.deepStrictEqual(b.map((x) => x.time), [3])
-        let c = await wo.select({ time: 3n })
-        assert.deepStrictEqual(c.map((x) => x.time), [3]) //S8
+        let c = await settle(wo.select({ time: 3n }))
+        assert.strictEqual(c.ok, false) //S8 第 33 項批 1: bigint 不在白名單
+        assert.ok(c.e instanceof Error && /^invalid find: /.test(c.e.message), c.e && c.e.message)
+    })
+    it('should serve a repeated {$eq: v} find from the cache of the same instance (same normalized find) but not for another instance', async function() {
+        await reset()
+        let wo = mk({ useCache: true })
+        let a = await wo.select({ name: { $eq: 'aa' } })
+        await admin.query(`UPDATE ${CL} SET name = $1 WHERE time = 1`, ['zz'])
+        let b = await wo.select({ name: { $eq: 'aa' } })
+        assert.deepStrictEqual(b.map((x) => x.time), a.map((x) => x.time)) //同一正規化 find 取快取
+        let c = await mk().select({ name: { $eq: 'aa' } })
+        assert.deepStrictEqual(c.map((x) => x.time), [4]) //未啟用快取之實例讀 DB
     })
     it('should keep cache keys distinct for Date value and its ISO string (different result sets)', async function() {
         await reset()
@@ -593,7 +663,12 @@ describe('find: table names that break the $nin rewrite of mongo-sql (R1)', func
         assert.strictEqual(d.ok, false)
         assert.strictEqual((await admin.query('SELECT count(*)::int AS c FROM "t$nin"')).rows[0].c, 2)
         assert.deepStrictEqual((await wo.select({ a: { $in: ['x'] } })).map((x) => x.time), [1]) //S4 其他運算子照常
-        assert.deepStrictEqual((await wo.select({ a: { $not: { $in: ['x'] } } })).map((x) => x.time), [2])
+        assert.deepStrictEqual((await wo.select({ a: { $ne: 'x' } })).map((x) => x.time), [2])
+        assert.deepStrictEqual((await wo.select({ a: { $eq: 'x' } })).map((x) => x.time), [1]) //$eq 轉譯為 $equals, 不經 $nin 改寫
+        let rdl = await settle(wo.select({ a: { $ne: '$x$' } })) //首尾 $ 字串之 $ne 須經 $nin 字面值改寫, 表名令 $nin 不可用而 reject(不得靜默變成 $in)
+        assert.strictEqual(rdl.ok, false)
+        assert.ok(rdl.e instanceof Error && /^invalid find: /.test(rdl.e.message), rdl.e && rdl.e.message)
+        assert.deepStrictEqual((await wo.select({ a: { $eq: '$x$' } })).map((x) => x.time), []) //$eq 改 $in 字面值, 可用
         await admin.query('DROP TABLE "t$nin"')
     })
     it('should keep $nin working for ordinary table names', async function() {

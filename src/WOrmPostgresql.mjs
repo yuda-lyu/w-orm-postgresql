@@ -579,19 +579,27 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 查詢數據
      *
-     * find先經白名單檢核(與delAll共用同一檢核)，不支援或無法轉譯者一律reject(訊息為invalid find: 原因 at [路徑])，不靜默忽略。
-     * 支援: 欄名鍵、$and、$or(非空陣列)；欄位層$equals、$ne、$gt、$gte、$lt、$lte、$in、$nin、$not、$like、$ilike、$null、$notNull；
-     * 欄位直給純量即等值，null即is null；欄名可為識別字、JSONB取值鍵(js->>name)與單一末尾轉型(ts::date)。
-     * 值可為字串(首尾皆$者不可，比對時改用$in)、有限數值、布林、bigint、有效Date、Buffer。
-     * 不支援(reject)如: undefined、$nor、$regex、$exists、$custom、子查詢、$nin:[]、空物件、NaN、RegExp、含引號或點之欄名。
-     * 比對依SQL三值邏輯，$ne、$nin、$not不含NULL列；欄位是否存在由PostgreSQL檢核。
-     * 頂層find僅接受未給(undefined)與一般物件({}為全部); null、陣列(含[]與[{...}])、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等
-     * 非條件物件之值一律reject(不視為{})。
+     * find僅支援系列白名單(規則同delAll，兩者共用同一檢核，檢核由wsemi之cvOrmFind擁有，再做PostgreSQL專屬轉譯)，
+     * 不支援或無法轉譯者一律整批reject(訊息為invalid find: 原因 at [路徑])，且於連線與送出任何SQL之前reject，不靜默忽略:
+     * 1. 未給、undefined或{}回傳全部數據；傳了值卻不是條件物件(null、陣列含[]與[{...}]、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等)
+     *    一律reject，不視為{}。
+     * 2. 欄位等值{欄: 純量}(多欄為AND，null為is null)；欄位運算子$eq $ne $gt $gte $lt $lte(值為純量)、$in $nin(值為純量陣列，$in:[]為恆假)；
+     *    文件層$and $or(值為條件物件之非空陣列，元素不可為{})。純量為字串(不含NUL與孤立代理字元)、有限數值、布林、有效Date；
+     *    null僅可用於欄位等值、$eq、$ne。欄名為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)，欄是否存在由PostgreSQL回報。
+     * 3. 白名單外一律reject，如$not $nor $regex $options $exists $where $expr $like $ilike $null $notNull $equals $custom、子查詢、欄位層$and/$or、
+     *    JSON取值鍵(js->>k)與轉型鍵(v::text)、undefined、bigint、Buffer、NaN、RegExp、函數、Symbol鍵、空的$nin/$and/$or、$in/$nin含null等。
+     *    單一find上限: 巢狀32層、$and/$or 1000項、$in/$nin 10000項、節點100000個、綁定參數65535個。
+     *    欄位是否存在由PostgreSQL回報，但與資料表同名之系統欄(ctid、xmin、xmax、cmin、cmax、tableoid)與接受整列為引數之函數名
+     *    (如concat)不會被回報為欄位不存在，而是以整列求值(條件可能對全部數據成立)，欄名請拼寫確認。
+     * 4. 語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
+     *    需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。
+     * 5. 首尾皆$之字串(mongo-sql視為欄引用)於等值、$eq、$ne、$in、$nin為字面值，於$gt $gte $lt $lte不支援；
+     *    表名含正規式特殊字元(如$)而令$nin改寫失配時，$nin與給首尾$字串之$ne會reject。
      * order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
-     * 詳見README與CLAUDE_rulebook.md〈條件(find)之支援範圍〉。
+     * 詳見README〈條件(find)白名單〉與CLAUDE_rulebook.md〈條件(find)之支援範圍〉。
      *
      * @memberOf WOrmPostgresql
-     * @param {Object} [find={}] 輸入查詢條件物件，未給或空物件為全部
+     * @param {Object} [find={}] 輸入查詢條件物件(系列白名單，規則同delAll之第1-3點)，未給、undefined或{}回傳全部數據，非條件物件或白名單外運算子整批reject
      * @param {Object} [order={}] 輸入排序條件物件
      * @returns {Promise} 回傳Promise，resolve回傳數據，reject回傳錯誤訊息
      */
@@ -1674,17 +1682,28 @@ function WOrmPostgresql(opt = {}) {
     }
 
     /**
-     * 刪除全部數據，需與del分開，避免未傳數據導致直接刪除全表
+     * 依條件刪除多筆數據(破壞性操作，須審慎使用，非必要不用；刪除單筆請用del)，需與del分開，避免未傳數據導致直接刪除全表
      *
-     * n與nDeleted皆為實際刪除筆數，不取全表筆數。find未給或為空物件時刪除全部數據，
-     * 條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
-     * find經與select共用之白名單檢核(支援範圍見select)，不支援或無法轉譯者(如含undefined、$nor、$regex、空清單)
-     * 於送出任何語句之前reject(訊息為invalid find: 原因 at [路徑])且不刪除任何數據，同一find於select命中之數據即本函數刪除之數據。
-     * 頂層find僅接受未給(undefined)與一般物件({}為全部); null、陣列(含[]與[{...}])、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等
-     * 非條件物件之值一律整批reject(不視為{}，不刪除任何數據)。
+     * 使用須知:
+     * 1. 不給條件即刪除全部數據: find未給、為undefined或為{}時，刪除資料表內全部數據，不另行確認。給了條件才是部分刪除。
+     * 2. 傳了值卻不是條件物件(null、陣列含[]與[{...}]、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等)
+     *    一律整批reject，不視為{}，不刪除任何數據。
+     * 3. 條件僅支援系列白名單: 欄位等值{欄: 純量}(多欄為AND)、欄位運算子$eq $ne $gt $gte $lt $lte(值為純量)與
+     *    $in $nin(值為純量陣列)、文件層$and $or(值為條件物件之非空陣列)。純量為字串、有限數值、布林、有效Date；
+     *    null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $regex $options $exists $where $expr $like $ilike $null $notNull $equals $custom等)、
+     *    欄位層$and/$or、子查詢、JSON取值鍵與轉型鍵、函數值、Symbol鍵、undefined值、bigint、Buffer、空的$nin/$and/$or等一律整批reject，
+     *    訊息為invalid find: 原因 at [路徑]，於連線與送出任何語句之前reject，不刪除任何數據。
+     * 4. 與select共用同一檢核與同一條件，select(find)命中之數據即本函數刪除之數據；建議先以select(find)確認命中範圍再刪除。
+     * 5. 條件值若來自可能為undefined、null或空陣列之變數，呼叫端須先自行判斷；undefined值會reject而非被忽略，
+     *    空的$nin會reject，$in:[]則為恆假(刪除0筆)。
+     * 6. 語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
+     *    需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。
+     *
+     * n與nDeleted皆為實際刪除筆數，不取全表筆數。條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
+     * 檢核錯誤以Error物件reject；資料庫錯誤以錯誤訊息字串reject(既有行為)。
      *
      * @memberOf WOrmPostgresql
-     * @param {Object} [find={}] 輸入刪除條件物件
+     * @param {Object} [find={}] 輸入刪除條件物件，不給予find則代表刪除全部數據
      * @returns {Promise} 回傳Promise，resolve回傳刪除結果物件{n,nDeleted,ok}，reject回傳錯誤訊息
      */
     async function delAll(find = {}) {

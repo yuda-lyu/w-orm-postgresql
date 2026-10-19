@@ -38,57 +38,33 @@ describe('cvFind: accepted finds produce the same mongo-sql output as the origin
         ['eq boolean', { ok: true }],
         ['eq false', { ok: false }],
         ['eq number', { value: 1.5 }],
-        ['eq bigint', { time: 3n }],
         ['eq Date', { ts: d }],
-        ['eq Buffer', { bin: Buffer.from('ab') }],
         ['eq string with quote', { name: 'it\'s' }],
         ['string starting with $', { name: '$a' }],
         ['string ending with $', { name: 'a$' }],
-        ['$equals', { name: { $equals: 'aa' } }],
-        ['$equals null', { name: { $equals: null } }],
         ['$ne', { name: { $ne: 'aa' } }],
         ['$ne null', { name: { $ne: null } }],
-        ['$ne true', { ok: { $ne: true } }],
+        ['$ne number', { value: { $ne: 5 } }],
         ['$gt $gte $lt $lte', { value: { $gt: 1, $gte: 2, $lt: 9, $lte: 8 } }],
+        ['$gt boolean', { ok: { $gt: false } }],
+        ['$gte Date', { ts: { $gte: d } }],
         ['$in', { value: { $in: [1, 2, 3] } }],
-        ['$in with null', { tag: { $in: ['x', null] } }],
-        ['$in [null]', { tag: { $in: [null] } }],
         ['$in []', { value: { $in: [] } }],
         ['$in $..$ literal', { name: { $in: ['$name$', '$'] } }],
         ['$in Date', { ts: { $in: [d] } }],
         ['$nin', { value: { $nin: [1, 2] } }],
-        ['$nin [null]', { tag: { $nin: [null] } }],
-        ['$not scalar', { name: { $not: 'aa' } }],
-        ['$not true', { ok: { $not: true } }],
-        ['$not operator object', { value: { $not: { $gt: 5, $lt: 9 } } }],
-        ['$not $not', { value: { $not: { $not: { $gt: 5 } } } }],
-        ['$not $in', { name: { $not: { $in: ['aa', null] } } }],
-        ['$like', { name: { $like: 'a%' } }],
-        ['$ilike', { name: { $ilike: 'A_' } }],
-        ['$null true', { tag: { $null: true } }],
-        ['$null false', { tag: { $null: false } }],
-        ['$notNull true', { tag: { $notNull: true } }],
-        ['$notNull false', { tag: { $notNull: false } }],
+        ['$nin $..$ literal', { name: { $nin: ['$name$'] } }],
         ['multi columns', { name: 'aa', value: { $gt: 1 }, tag: null }],
         ['$and', { $and: [{ value: { $gt: 2 } }, { value: { $lt: 6 } }] }],
         ['$or', { $or: [{ value: { $lte: 1 } }, { value: { $gte: 10 } }] }],
         ['$and one element', { $and: [{ name: 'aa' }] }],
         ['$or one element', { $or: [{ name: 'aa' }] }],
-        ['$and with {} element', { $and: [{ name: 'aa' }, {}] }],
-        ['$and with {} first', { $and: [{}, { name: 'aa' }, { value: 1 }] }],
         ['column + $or', { name: 'aa', $or: [{ value: 1 }, { value: 4 }] }],
+        ['column + $and + $or', { name: 'aa', $and: [{ value: 1 }], $or: [{ tag: 'x' }, { tag: null }] }],
         ['$or of multi-key docs', { $or: [{ name: 'aa', value: 1 }, { tag: 'y' }] }],
         ['nested $or $and', { $or: [{ $and: [{ value: { $ne: 4 } }, { value: { $in: [4, 5, 6] } }, { value: { $nin: [6, 7] } }] }, { $or: [{ value: { $lte: -1 } }, { value: { $gte: 10 } }] }] }],
-        ['$or with $in null (parenthesized)', { $or: [{ tag: { $in: ['x', null] } }, { name: 'aa' }] }],
-        ['JSON path ->>', { 'js->>k': '1' }],
-        ['JSON path ->', { 'js->k': '1' }],
-        ['JSON path #>>', { 'js#>>k': '1' }],
-        ['JSON path #>', { 'js#>k': '1' }],
-        ['JSON path multi', { 'js->a->>b': 'x' }],
-        ['JSON path array index', { 'js->>0': 'x' }],
-        ['JSON path with $nin', { 'js->>k': { $nin: ['a', 'b'] } }],
-        ['cast', { 'value::text': '5' }],
-        ['cast with operator', { 'ts::date': { $gte: '2020-01-01' } }],
+        ['portable: exclude NULL', { $and: [{ tag: { $ne: null } }, { tag: { $ne: 'x' } }] }],
+        ['portable: include NULL', { $or: [{ tag: null }, { tag: { $ne: 'x' } }] }],
         ['unicode column', { 中文: 1 }],
         ['underscore column', { _a_1: 1 }],
         ['unsafe integer number', { value: Number.MAX_SAFE_INTEGER + 2 }],
@@ -102,9 +78,149 @@ describe('cvFind: accepted finds produce the same mongo-sql output as the origin
         })
     })
 
-    it('should drop {} elements of $and exactly like mongo-sql does (still same output)', function() {
-        let f = { $and: [{}, {}, { name: 'aa' }, {}] }
-        assert.strictEqual(sqlOf(cvFind(f)), sqlOf({ name: 'aa' })) //S4
+    it('should reject {} elements of $and (they were dropped as constant true before the series whitelist)', function() {
+        throwsFind({ $and: [{}, {}, { name: 'aa' }, {}] }, /empty condition/)
+        throwsFind({ $and: [{ name: 'aa' }, {}] }, /empty condition/)
+    })
+})
+
+
+describe('cvFind: pg-specific translations hand mongo-sql exactly the documented input (R11, S12 S13)', function() {
+    //[label, 呼叫端 find, 預期交給 mongo-sql 之 where]; 以 mongo-sql 實產出之 SQL 與 values 逐字比對
+    let translated = [
+        ['$eq string -> $equals', { name: { $eq: 'aa' } }, { name: { $equals: 'aa' } }],
+        ['$eq null -> $equals null (is null)', { tag: { $eq: null } }, { tag: { $equals: null } }],
+        ['$eq number', { value: { $eq: 5 } }, { value: { $equals: 5 } }],
+        ['$eq boolean', { ok: { $eq: true } }, { ok: { $equals: true } }],
+        ['$eq with other operators of the column', { value: { $gt: 1, $eq: 5, $lt: 9 } }, { value: { $gt: 1, $equals: 5, $lt: 9 } }],
+        ['$ne true -> equals false (SQL three-valued, no IS NOT TRUE)', { ok: { $ne: true } }, { ok: { $equals: false } }],
+        ['$ne false -> equals true', { ok: { $ne: false } }, { ok: { $equals: true } }],
+        ['$eq and boolean $ne collide: second goes to $and', { ok: { $eq: false, $ne: true } }, { ok: { $equals: false }, $and: [{ ok: { $equals: false } }] }],
+        ['$eq and boolean $ne collide beside a user $and', { $and: [{ value: 1 }], ok: { $eq: true, $ne: true } }, { $and: [{ value: 1 }, { ok: { $equals: false } }], ok: { $equals: true } }],
+        ['$..$ string equality -> $in literal', { name: '$x$' }, { name: { $in: ['$x$'] } }],
+        ['$ string equality -> $in literal', { name: '$' }, { name: { $in: ['$'] } }],
+        ['$..$ string $eq -> $in literal', { name: { $eq: '$x$' } }, { name: { $in: ['$x$'] } }],
+        ['$..$ string $ne -> $nin literal', { name: { $ne: '$x$' } }, { name: { $nin: ['$x$'] } }],
+        ['$..$ string $eq collides with a later $in: the later one is kept as a separate $and element', { name: { $eq: '$x$', $in: ['a', 'b'] } }, { name: { $in: ['$x$'] }, $and: [{ name: { $in: ['a', 'b'] } }] }],
+        ['$..$ string $ne collides with a later $nin: the later one is kept as a separate $and element', { name: { $ne: '$x$', $nin: ['a'] } }, { name: { $nin: ['$x$'] }, $and: [{ name: { $nin: ['a'] } }] }],
+        ['$in before $..$ string $eq: the $eq one goes to $and', { name: { $in: ['a', 'b'], $eq: '$x$' } }, { name: { $in: ['a', 'b'] }, $and: [{ name: { $in: ['$x$'] } }] }],
+        //反序之碰撞(第一個占位、後到者併入 $and), 不得靜默覆蓋或丟棄任何一個
+        ['boolean $ne before $eq with the opposite meaning (contradiction)', { ok: { $ne: true, $eq: true } }, { ok: { $equals: false }, $and: [{ ok: { $equals: true } }] }],
+        ['boolean $ne before $eq with the same meaning', { ok: { $ne: true, $eq: false } }, { ok: { $equals: false }, $and: [{ ok: { $equals: false } }] }],
+        ['$nin before $..$ string $ne', { name: { $nin: ['a'], $ne: '$x$' } }, { name: { $nin: ['a'] }, $and: [{ name: { $nin: ['$x$'] } }] }],
+        ['$nin before $..$ string $ne beside a user $and', { $and: [{ value: 1 }], name: { $nin: ['a'], $ne: '$x$' } }, { $and: [{ value: 1 }, { name: { $nin: ['$x$'] } }], name: { $nin: ['a'] } }],
+        ['collision inside an $or element that already has a $and', { $or: [{ ok: { $ne: false, $eq: false }, $and: [{ value: 1 }] }, { value: 2 }] }, { $or: [{ ok: { $equals: true }, $and: [{ value: 1 }, { ok: { $equals: false } }] }, { value: 2 }] }],
+        ['two columns collide independently', { ok: { $eq: true, $ne: false }, name: { $eq: '$x$', $in: ['a'] } }, { ok: { $equals: true }, name: { $in: ['$x$'] }, $and: [{ ok: { $equals: true } }, { name: { $in: ['a'] } }] }],
+        ['$..$ string inside $or elements', { $or: [{ name: '$x$' }, { name: 'aa' }] }, { $or: [{ name: { $in: ['$x$'] } }, { name: 'aa' }] }],
+    ]
+    translated.forEach(([label, f, want]) => {
+        it(`should hand mongo-sql the expected input for ${label}`, function() {
+            assert.strictEqual(sqlOf(cvFind(f)), sqlOf(want))
+        })
+    })
+
+    it('should use is false / is true (not IS NOT TRUE) for boolean $ne, so NULL rows are excluded', function() {
+        let q = (f) => mongoSql.sql({ type: 'select', table: 't', where: cvFind(f) })
+        assert.strictEqual(q({ ok: { $ne: true } }).query, 'select "t".* from "t" where "t"."ok" is false')
+        assert.strictEqual(q({ ok: { $ne: false } }).query, 'select "t".* from "t" where "t"."ok" is true')
+        assert.strictEqual(q({ ok: { $ne: 'x' } }).query, 'select "t".* from "t" where "t"."ok" != $1')
+        assert.strictEqual(q({ ok: { $ne: null } }).query, 'select "t".* from "t" where "t"."ok" is not null')
+    })
+
+    it('should give $eq and $equals-input the same SQL and values, and $eq the same as plain equality for non-null scalars', function() {
+        assert.strictEqual(sqlOf(cvFind({ name: { $eq: 'aa' } })), sqlOf({ name: { $equals: 'aa' } }))
+        assert.strictEqual(sqlOf(cvFind({ value: { $eq: 5 } })), sqlOf({ value: 5 }))
+        assert.strictEqual(sqlOf(cvFind({ tag: { $eq: null } })), sqlOf({ tag: null }))
+        assert.strictEqual(sqlOf(cvFind({ ok: { $eq: true } })), sqlOf({ ok: true }))
+    })
+
+    it('should reject $ne with a $..$ string when $nin is unavailable (table name), but keep $eq (uses $in)', function() {
+        throwsFind2({ name: { $ne: '$x$' } }, { nin: false }, /\$nin is not supported with this table name/)
+        assert.doesNotThrow(() => cvFind({ name: { $eq: '$x$' } }, { nin: false }))
+        assert.doesNotThrow(() => cvFind({ name: '$x$' }, { nin: false }))
+    })
+
+    it('should reject $..$ strings in $gt $gte $lt $lte (mongo-sql has no escape) with a message that does not echo the value', function() {
+        ;['$gt', '$gte', '$lt', '$lte'].forEach((op) => {
+            assert.throws(() => cvFind({ name: { [op]: '$secretcol$' } }), (e) => e instanceof Error && /^invalid find: /.test(e.message) && !/secretcol/.test(e.message) && new RegExp(`\\.${op.replace('$', '\\$')}\\]$`).test(e.message), op)
+        })
+    })
+
+    it('should keep the translated structure free of anything the caller could still reach (fresh null-prototype objects and index lists)', function() {
+        let f = { name: { $eq: 'aa' }, $or: [{ ok: { $ne: true } }, { name: '$x$' }] }
+        let before = JSON.stringify(f)
+        let nf = cvFind(f)
+        assert.strictEqual(JSON.stringify(f), before)
+        assert.strictEqual(Object.getPrototypeOf(nf), null)
+        assert.strictEqual(Object.getPrototypeOf(nf.name), null)
+        assert.strictEqual(Object.getPrototypeOf(nf.$or), null)
+        assert.strictEqual(Object.getPrototypeOf(nf.$or[1].name), null)
+        assert.ok(Array.isArray(nf.$or[1].name.$in))
+    })
+})
+
+
+describe('cvFind: features removed by the series whitelist now throw invalid find (R11, S9 S14; previously accepted)', function() {
+    let removed = [
+        ['$equals', { name: { $equals: 'aa' } }],
+        ['$equals null', { name: { $equals: null } }],
+        ['$like', { name: { $like: 'a%' } }],
+        ['$ilike', { name: { $ilike: 'A_' } }],
+        ['$null true', { tag: { $null: true } }],
+        ['$null false', { tag: { $null: false } }],
+        ['$notNull true', { tag: { $notNull: true } }],
+        ['$notNull false', { tag: { $notNull: false } }],
+        ['$not scalar', { name: { $not: 'aa' } }],
+        ['$not true', { ok: { $not: true } }],
+        ['$not operator object', { value: { $not: { $gt: 5, $lt: 9 } } }],
+        ['$not $not', { value: { $not: { $not: { $gt: 5 } } } }],
+        ['$not $in', { name: { $not: { $in: ['aa', 'bb'] } } }],
+        ['$in with null', { tag: { $in: ['x', null] } }],
+        ['$in [null]', { tag: { $in: [null] } }],
+        ['$nin [null]', { tag: { $nin: [null] } }],
+        ['$or with $in null', { $or: [{ tag: { $in: ['x', null] } }, { name: 'aa' }] }],
+        ['eq bigint', { time: 3n }],
+        ['$gt bigint', { time: { $gt: 3n } }],
+        ['$in bigint', { time: { $in: [3n] } }],
+        ['eq Buffer', { bin: Buffer.from('ab') }],
+        ['$in Buffer', { bin: { $in: [Buffer.from('ab')] } }],
+        ['$and with {} element', { $and: [{ name: 'aa' }, {}] }],
+        ['$and with {} first', { $and: [{}, { name: 'aa' }, { value: 1 }] }],
+        ['JSON path ->>', { 'js->>k': '1' }],
+        ['JSON path ->', { 'js->k': '1' }],
+        ['JSON path #>>', { 'js#>>k': '1' }],
+        ['JSON path #>', { 'js#>k': '1' }],
+        ['JSON path multi', { 'js->a->>b': 'x' }],
+        ['JSON path array index', { 'js->>0': 'x' }],
+        ['JSON path with $nin', { 'js->>k': { $nin: ['a', 'b'] } }],
+        ['JSON path with unicode part', { 'js->>中文': 'x' }],
+        ['cast', { 'value::text': '5' }],
+        ['cast with operator', { 'ts::date': { $gte: '2020-01-01' } }],
+        ['$or with 1001 elements', { $or: Array.from({ length: 1001 }, (_, i) => ({ value: i })) }],
+        ['$and with 1001 elements', { $and: Array.from({ length: 1001 }, (_, i) => ({ value: i })) }],
+        ['$in with 10001 elements', { value: { $in: Array.from({ length: 10001 }, (_, i) => i) } }],
+        ['$nin with 10001 elements', { value: { $nin: Array.from({ length: 10001 }, (_, i) => i) } }],
+        ['column of 129 chars', { ['c'.repeat(129)]: 1 }],
+        ['top Map with null prototype', Object.setPrototypeOf(new Map([['name', 'aa']]), null)],
+        ['top empty Proxy', new Proxy({}, {})],
+    ]
+    removed.forEach(([label, f]) => {
+        it(`should throw invalid find for ${label}`, function() {
+            throwsFind(f)
+        })
+    })
+    it('should accept the limits exactly: $or / $and with 1000 elements, $in / $nin with 10000 elements, columns of 63 bytes', function() {
+        assert.doesNotThrow(() => cvFind({ $or: Array.from({ length: 1000 }, (_, i) => ({ value: i })) }))
+        assert.doesNotThrow(() => cvFind({ $and: Array.from({ length: 1000 }, (_, i) => ({ value: i })) }))
+        assert.doesNotThrow(() => cvFind({ value: { $in: Array.from({ length: 10000 }, (_, i) => i) } }))
+        assert.doesNotThrow(() => cvFind({ value: { $nin: Array.from({ length: 10000 }, (_, i) => i) } }))
+        assert.doesNotThrow(() => cvFind({ ['c'.repeat(63)]: 1 }))
+    })
+    it('should keep the same message format and carry the path for removed features', function() {
+        throwsFind({ name: { $like: 'a%' } }, /^invalid find: unsupported operator \[\$like\] at \[find\.name\.\$like\]$/)
+        throwsFind({ 'js->>k': 1 }, /^invalid find: unsupported column name .* at \[find\.js->>k\]$/)
+        throwsFind({ time: 3n }, /^invalid find: unsupported value type .* at \[find\.time\]$/)
+        throwsFind({ tag: { $in: [null] } }, /^invalid find: null is not allowed here at \[find\.tag\.\$in\[0\]\]$/)
     })
 })
 
@@ -122,7 +238,6 @@ describe('cvFind: unsupported or untranslatable finds throw (S2 S3 S5)', functio
         ['$regex', { a: { $regex: 'x' } }],
         ['$regex RegExp', { a: { $regex: /x/ } }],
         ['$options', { a: { $options: 'i' } }],
-        ['$eq', { a: { $eq: 1 } }],
         ['$exists', { a: { $exists: true } }],
         ['$exists subquery', { a: { $exists: { type: 'select', table: 't' } } }],
         ['$notExists', { a: { $notExists: { type: 'select', table: 't' } } }],
@@ -207,9 +322,6 @@ describe('cvFind: unsupported or untranslatable finds throw (S2 S3 S5)', functio
         ['lone surrogate', { a: '\ud800' }],
         ['lone low surrogate', { a: 'x\udc00y' }],
         ['NUL', { a: 'x\u0000y' }],
-        ['$..$ string', { a: '$name$' }],
-        ['$ string', { a: '$' }],
-        ['$$ string', { a: { $ne: '$$' } }],
         ['$..$ in $not', { a: { $not: '$x$' } }],
         ['$..$ in $gt', { a: { $gt: '$x$' } }],
         ['$..$ in $like', { a: { $like: '$x$' } }],
@@ -304,12 +416,12 @@ describe('cvFind: unsupported or untranslatable finds throw (S2 S3 S5)', functio
         throwsFind(nest(33), /nesting is too deep/)
     })
 
-    it('should throw for $not nested over the depth limit', function() {
+    it('should throw for a deep $not chain (the operator itself is no longer in the whitelist)', function() {
         let f = { $gt: 1 }
         for (let i = 0; i < 40; i++) {
             f = { $not: f }
         }
-        throwsFind({ a: f }, /nesting is too deep/)
+        throwsFind({ a: f }, /unsupported operator \[\$not\]/)
     })
 
     it('should throw for shared references that expand exponentially (DAG), quickly', function() {
@@ -322,10 +434,106 @@ describe('cvFind: unsupported or untranslatable finds throw (S2 S3 S5)', functio
         assert.ok(Date.now() - t0 < 5000, 'must fail fast')
     })
 
-    it('should throw when total bound parameters exceed 65535 (two arrays)', function() {
-        let a = Array.from({ length: 40000 }, (_, i) => i)
-        throwsFind({ x: { $in: a }, y: { $in: a } }, /too many bound parameters/)
-        assert.doesNotThrow(() => cvFind({ x: { $in: Array.from({ length: 65535 }, (_, i) => i) } }))
+    it('should throw when total bound parameters exceed 65535 (pg-specific, 7 arrays of 10000) while 6 arrays of 10000 plus 5535 are accepted', function() {
+        let a = Array.from({ length: 10000 }, (_, i) => i)
+        let cols = (n) => Object.fromEntries(Array.from({ length: n }, (_, k) => [`x${k}`, { $in: a }]))
+        throwsFind(cols(7), /too many bound parameters/)
+        assert.doesNotThrow(() => cvFind({ ...cols(6), y: { $in: Array.from({ length: 5535 }, (_, i) => i) } })) //剛好 65535
+        throwsFind({ ...cols(6), y: { $in: Array.from({ length: 5536 }, (_, i) => i) } }, /too many bound parameters/)
+        throwsFind({ x: { $in: Array.from({ length: 40000 }, (_, i) => i) } }, /array is too large/) //共用層上限 10000 先於綁定參數上限
+    })
+
+    it('should keep the shared node limit of 100000 (not lowered by this package): about 91000 nodes are accepted, about 111000 are rejected', function() {
+        //布林與 null 不佔綁定參數, 故只受節點上限約束; 1000 個文件(每個一個節點)各含 per 個欄位條件
+        let mk = (per) => ({ $or: Array.from({ length: 1000 }, () => Object.fromEntries(Array.from({ length: per }, (_, j) => [`c${j}`, j % 2 === 0 ? null : true]))) })
+        assert.doesNotThrow(() => cvFind(mk(90)))
+        throwsFind(mk(110), /condition is too large/)
+    })
+
+    it('should count a $..$ string once (direct equality, $eq, $ne and $in all send exactly one bound parameter), at the 65535 / 65536 boundary', function() {
+        let a = Array.from({ length: 10000 }, (_, i) => i)
+        let cols = (n) => Object.fromEntries(Array.from({ length: n }, (_, k) => [`x${k}`, { $in: a }]))
+        let rest = Array.from({ length: 5534 }, (_, i) => i)
+        let mkf = (s) => ({ ...cols(6), y: { $in: rest }, ...s }) //60000 + 5534 + 1 = 65535
+        ;[{ s: '$x$' }, { s: { $eq: '$x$' } }, { s: { $ne: '$x$' } }, { s: { $in: ['$x$'] } }, { s: 'plain' }].forEach((s) => {
+            let f = mkf(s)
+            assert.doesNotThrow(() => cvFind(f), JSON.stringify(s))
+            let nf = cvFind(f)
+            let q = mongoSql.sql({ type: 'select', table: 't', where: nf })
+            assert.strictEqual(q.values.length, 65535, `sent parameters for ${JSON.stringify(s)}`) //計數與實際送出之參數個數一致
+        })
+        ;[{ s: '$x$' }, { s: { $eq: '$x$' } }, { s: { $ne: '$x$' } }, { s: { $in: ['$x$'] } }, { s: 'plain' }].forEach((s) => {
+            throwsFind({ ...cols(6), y: { $in: [...rest, 1] }, ...s }, /too many bound parameters/) //65536
+        })
+    })
+
+    it('should count exactly the parameters mongo-sql sends: booleans and null take none, every other scalar and every $in/$nin element takes one', function() {
+        let mixed = { a: true, b: false, c: null, d: { $eq: true }, e: { $ne: false }, f: { $ne: null }, g: { $eq: null }, h: { $gt: false }, i: 'x', j: 5, k: new Date(0), l: { $gt: 1, $lte: 9 }, m: { $in: [true, false, 1] }, n: '$a$', o: { $nin: ['$b$'] }, p: { $ne: true } }
+        let sent = (f) => mongoSql.sql({ type: 'select', table: 't', where: cvFind(f) }).values.length
+        let base = sent(mixed)
+        assert.strictEqual(base, 10) //i1 j1 k1 l2 m3 n1 o1; a b c d e f g h p 皆不佔參數
+        let a = Array.from({ length: 10000 }, (_, i) => i)
+        let cols = (n) => Object.fromEntries(Array.from({ length: n }, (_, k) => [`x${k}`, { $in: a }]))
+        let fill = (n) => ({ ...mixed, ...cols(6), y: { $in: Array.from({ length: n }, (_, i) => i) } })
+        let room = 65535 - 60000 - base
+        assert.strictEqual(sent(fill(room)), 65535) //實際送出剛好 65535: 計數器恰好放行
+        assert.doesNotThrow(() => cvFind(fill(room)))
+        throwsFind(fill(room + 1), /too many bound parameters/) //65536: 計數器恰好拒收
+        //僅布林與 null(皆不佔參數)再多也不超限: 7 x 10000 個布林/null 欄位條件, 實際 0 個參數
+        let flags = { $or: Array.from({ length: 1000 }, (_, i) => ({ [`c${i}`]: i % 2 === 0 ? null : true })) }
+        assert.strictEqual(sent(flags), 0)
+    })
+
+    it('should send the same number of bound parameters as it counts for several $..$ strings and mixed operators', function() {
+        let f = { a: '$a$', b: { $eq: '$b$' }, c: { $ne: '$c$' }, d: { $in: ['$d$', 'x'] }, e: 1, g: { $gt: 2, $lt: 5 }, h: true, i: null }
+        let q = mongoSql.sql({ type: 'select', table: 't', where: cvFind(f) })
+        //a b c: 各 1; d: 2; e: 1; g: 2; h: 布林由 mongo-sql 內嵌不佔參數; i: null 不佔參數
+        assert.strictEqual(q.values.length, 1 + 1 + 1 + 2 + 1 + 2)
+    })
+
+    it('should not let a numeric-index setter on Array.prototype swallow the checked copy (elements are defined, never assigned)', function() {
+        let n = 0
+        let d = Object.getOwnPropertyDescriptor(Array.prototype, '0')
+        let fs = [
+            { $and: [{ s: 'aa' }] },
+            { $or: [{ s: 'aa' }, { t: 1 }] },
+            { s: { $in: ['aa', 'bb'] } },
+            { s: { $nin: ['aa'] } },
+            { ok: { $eq: false, $ne: true } },
+            { s: { $eq: '$x$', $in: ['a'] } },
+            { $and: [{ s: 1 }], ok: { $eq: true, $ne: true } },
+        ]
+        let outs = Object.create(null) //視窗內不碰陣列之索引指派(本測試自己的程式碼也會被 setter 影響)
+        Object.defineProperty(Array.prototype, '0', {
+            configurable: true,
+            get() {
+                return undefined
+            },
+            set() {
+                n += 1 //吞掉指派
+            }
+        })
+        try {
+            for (let i = 0; i < fs.length; i++) {
+                outs[i] = cvFind(fs[i])
+            }
+        }
+        finally {
+            if (d) {
+                Object.defineProperty(Array.prototype, '0', d)
+            }
+            else {
+                delete Array.prototype[0]
+            }
+        }
+        assert.strictEqual(n, 0, 'cvFind must not assign array indexes')
+        assert.strictEqual(sqlOf(outs[0]), sqlOf({ $and: [{ s: 'aa' }] }))
+        assert.strictEqual(sqlOf(outs[1]), sqlOf({ $or: [{ s: 'aa' }, { t: 1 }] }))
+        assert.deepStrictEqual(outs[2].s.$in, ['aa', 'bb'])
+        assert.deepStrictEqual(outs[3].s.$nin, ['aa'])
+        assert.strictEqual(sqlOf(outs[4]), sqlOf({ ok: { $equals: false }, $and: [{ ok: { $equals: false } }] }))
+        assert.strictEqual(sqlOf(outs[5]), sqlOf({ s: { $in: ['$x$'] }, $and: [{ s: { $in: ['a'] } }] }))
+        assert.strictEqual(sqlOf(outs[6]), sqlOf({ $and: [{ s: 1 }, { ok: { $equals: false } }], ok: { $equals: true } }))
     })
 
     it('should throw for fake Buffer and fake Date objects (internal slot check)', function() {
@@ -438,43 +646,33 @@ describe('cvFind: output is a fresh null-prototype copy that is immune to the ca
         assert.ok(Array.isArray(nf.c.$in)) //$in 須為真陣列
     })
 
-    it('should copy Date and Buffer values', function() {
+    it('should copy Date values (a new Date, unaffected by later changes of the original), in $in as well', function() {
         let d = new Date(5)
-        let b = Buffer.from('ab')
-        let nf = cvFind({ d, b })
+        let e = new Date(6)
+        let nf = cvFind({ d, x: { $in: [e] } })
         assert.notStrictEqual(nf.d, d)
         assert.strictEqual(nf.d.getTime(), 5)
-        assert.notStrictEqual(nf.b, b)
-        assert.ok(nf.b.equals(b))
-        b[0] = 0 //改原 Buffer 不影響複本
-        assert.strictEqual(nf.b[0], 97)
+        assert.notStrictEqual(nf.x.$in[0], e)
+        d.setTime(99) //改原 Date 不影響複本
+        e.setTime(98)
+        assert.strictEqual(nf.d.getTime(), 5)
+        assert.strictEqual(nf.x.$in[0].getTime(), 6)
     })
 
-    it('should copy a Buffer by its internal slots and never call its own valueOf or read its own length', function() {
+    it('should reject Buffer values (a series whitelist scalar is string, finite number, boolean, valid Date), also views and Buffers with overridden members', function() {
         let n = 0
         let b = Buffer.from('AAAA')
-        b.valueOf = () => (++n === 1 ? 'first' : 'second') //Buffer.from(b) 會呼叫 valueOf
+        b.valueOf = () => (++n === 1 ? 'first' : 'second')
         Object.defineProperty(b, 'length', {
             get() {
                 n += 100
                 return 2
             }
         })
-        let c1 = cvFind({ bin: b }).bin
-        let c2 = cvFind({ bin: b }).bin
+        throwsFind({ bin: b })
+        throwsFind({ bin: Buffer.from('xxABCDyy').subarray(2, 6) })
+        throwsFind({ bin: { $in: [Buffer.from('ab')] } })
         assert.strictEqual(n, 0) //沒有呼叫呼叫端自有之 valueOf / length
-        assert.ok(Buffer.isBuffer(c1) && Buffer.isBuffer(c2))
-        assert.strictEqual(c1.toString(), 'AAAA')
-        assert.strictEqual(c2.toString(), 'AAAA')
-    })
-
-    it('should copy a Buffer that is a view of a larger ArrayBuffer by its own offset and length', function() {
-        let big = Buffer.from('xxABCDyy')
-        let view = big.subarray(2, 6)
-        let c = cvFind({ bin: view }).bin
-        assert.strictEqual(c.toString(), 'ABCD')
-        view[0] = 0x5a //改原視圖不影響複本
-        assert.strictEqual(c.toString(), 'ABCD')
     })
 
     it('should read every property exactly once and use only that value (Proxy trap counts)', function() {
@@ -619,23 +817,32 @@ describe('cvKey: cache keys distinguish values that JSON.stringify would merge (
         assert.notStrictEqual(k({ a: 1 }), k({ a: 1 }, { a: 'asc' }))
         assert.notStrictEqual(k({ a: 1 }), k({ a: 2 }))
     })
-    it('should distinguish Date from its ISO string, bigint from number and string, Buffer from its hex string', function() {
+    //cvKey 本身未改(find 路徑已不可能含 bigint、Buffer: 直接以原物件呼叫 cvKey 驗證其區分能力)
+    let kr = (f, o = {}) => cvKey(f, cvOrder(o))
+    it('should distinguish Date from its ISO string and Date values from each other', function() {
         let d = new Date('2020-01-01T00:00:00.000Z')
         assert.notStrictEqual(k({ a: d }), k({ a: d.toISOString() }))
-        assert.notStrictEqual(k({ a: 3n }), k({ a: 3 }))
-        assert.notStrictEqual(k({ a: 3n }), k({ a: '3' }))
-        assert.notStrictEqual(k({ a: Buffer.from('ab') }), k({ a: '6162' }))
-        assert.notStrictEqual(k({ a: Buffer.from('ab') }), k({ a: Buffer.from('ac') }))
         assert.notStrictEqual(k({ a: new Date(1) }), k({ a: new Date(2) }))
+    })
+    it('should still distinguish bigint from number and string, Buffer from its hex string when cvKey is called directly', function() {
+        assert.notStrictEqual(kr({ a: 3n }), kr({ a: 3 }))
+        assert.notStrictEqual(kr({ a: 3n }), kr({ a: '3' }))
+        assert.notStrictEqual(kr({ a: Buffer.from('ab') }), kr({ a: '6162' }))
+        assert.notStrictEqual(kr({ a: Buffer.from('ab') }), kr({ a: Buffer.from('ac') }))
     })
     it('should distinguish null from other falsy values and the keys of $in lists', function() {
         assert.notStrictEqual(k({ a: null }), k({ a: 0 }))
         assert.notStrictEqual(k({ a: null }), k({ a: '' }))
-        assert.notStrictEqual(k({ a: { $in: [null] } }), k({ a: { $in: [] } }))
+        assert.notStrictEqual(k({ a: { $in: [1] } }), k({ a: { $in: [] } }))
         assert.notStrictEqual(k({ a: { $in: [1, 2] } }), k({ a: { $in: [2, 1] } }))
     })
-    it('should not throw for bigint values (JSON.stringify would)', function() {
-        assert.doesNotThrow(() => k({ a: { $in: [1n, 2n] } }))
+    it('should not throw for bigint values (JSON.stringify would) when cvKey is called directly', function() {
+        assert.doesNotThrow(() => kr({ a: { $in: [1n, 2n] } }))
+    })
+    it('should give different keys for the translated forms of different finds ($eq vs plain equality are separate cache entries)', function() {
+        assert.notStrictEqual(k({ a: { $eq: 1 } }), k({ a: 1 }))
+        assert.strictEqual(k({ a: { $eq: 1 } }), k({ a: { $eq: 1 } }))
+        assert.notStrictEqual(k({ ok: { $ne: true } }), k({ ok: { $ne: false } }))
     })
     it('should give the same key for selectByPk-style plain find and normalized select find', function() {
         let d = new Date(7)
@@ -647,14 +854,18 @@ describe('cvKey: cache keys distinguish values that JSON.stringify would merge (
 
 describe('cvFind: re-entrancy, hostile hooks and options (R1)', function() {
     it('should keep counting bound parameters of the outer call when a trap calls cvFind re-entrantly', function() {
-        let a = Array.from({ length: 40000 }, (_, i) => i)
+        let a = Array.from({ length: 10000 }, (_, i) => i)
         let y = new Proxy({ $in: a }, {
             getOwnPropertyDescriptor(t, k) {
                 cvFind({ z: 1 }) //可重入: 內層呼叫不得重置外層之預算
                 return Reflect.getOwnPropertyDescriptor(t, k)
             },
         })
-        throwsFind({ x: { $in: a }, y }, /too many bound parameters/)
+        let f = { y }
+        for (let i = 0; i < 6; i++) {
+            f[`x${i}`] = { $in: a }
+        }
+        throwsFind(f, /too many bound parameters/) //7 x 10000 > 65535
     })
 
     it('should turn any exception of caller hooks into invalid find (Symbol.toStringTag getter, Proxy trap)', function() {
@@ -679,27 +890,30 @@ describe('cvFind: re-entrancy, hostile hooks and options (R1)', function() {
     })
 
     it('should not leak state between calls (a failed call does not affect the next one)', function() {
-        let big = Array.from({ length: 65535 }, (_, i) => i)
-        assert.doesNotThrow(() => cvFind({ x: { $in: big } }))
-        assert.throws(() => cvFind({ x: { $in: big }, y: 1 }))
-        assert.doesNotThrow(() => cvFind({ x: { $in: big } }))
+        let a = Array.from({ length: 10000 }, (_, i) => i)
+        let cols = (n) => Object.fromEntries(Array.from({ length: n }, (_, k) => [`x${k}`, { $in: a }]))
+        assert.doesNotThrow(() => cvFind(cols(6)))
+        assert.throws(() => cvFind(cols(7)))
+        assert.doesNotThrow(() => cvFind(cols(6)))
+        assert.throws(() => cvFind({ a: { $nin: ['x'] } }, { nin: false })) //nin 選項不殘留
+        assert.doesNotThrow(() => cvFind({ a: { $nin: ['x'] } }))
     })
 
     it('should reject $nin only when opt.nin is false (table name breaks mongo-sql $nin rewrite)', function() {
         assert.doesNotThrow(() => cvFind({ a: { $nin: ['x'] } }))
         assert.doesNotThrow(() => cvFind({ a: { $nin: ['x'] } }, { nin: true }))
         throwsFind2({ a: { $nin: ['x'] } }, { nin: false }, /\$nin is not supported with this table name/)
-        throwsFind2({ a: { $not: { $nin: ['x'] } } }, { nin: false }, /\$nin is not supported/)
-        assert.doesNotThrow(() => cvFind({ a: { $in: ['x'], $not: { $in: ['y'] } } }, { nin: false })) //其他運算子不受影響
+        throwsFind2({ $and: [{ b: 1 }, { $or: [{ a: { $nin: ['x'] } }] }] }, { nin: false }, /\$nin is not supported/)
+        assert.doesNotThrow(() => cvFind({ a: { $in: ['x'], $ne: 'y', $gt: 'a' } }, { nin: false })) //其他運算子不受影響
     })
 
-    it('should accept unicode JSON path parts like mongo-sql and keep the same SQL', function() {
-        let f = { 'js->>中文': 'x', 'js->a->>名稱': 'y' }
-        assert.strictEqual(sqlOf(cvFind(f)), sqlOf(f))
+    it('should accept unicode identifiers (letters with combining marks) in column names, and reject every JSON path key in find', function() {
+        throwsFind({ 'js->>中文': 'x', 'js->a->>名稱': 'y' })
         throwsFind({ 'js->>1中': 1 })
         throwsFind({ 'js->>٣': 1 }) //非 ASCII 數字開頭
         throwsFind({ 'js->>\u0301a': 1 }) //組合附加符號不可作首字元
-        let g = { 'js->>a\u0301': 1, 'a\u0301': 2 } //字母後接組合附加符號(\p{M})為識別字之一部分, 與 mongo-sql 之 SQL 相同
+        throwsFind({ 'js->>a\u0301': 1 })
+        let g = { 'a\u0301': 2, '\u4e2d\u6587': 1 } //字母後接組合附加符號(\p{M})為識別字之一部分, 與 mongo-sql 之 SQL 相同
         assert.strictEqual(sqlOf(cvFind(g)), sqlOf(g))
     })
 
@@ -799,9 +1013,9 @@ describe('cvFind: arrays are read exactly once (length, elements) and stay in th
         Object.defineProperty(arr2, '0', { value: 1, enumerable: false, configurable: true, writable: true })
         throwsFind({ n: { $in: arr2 } }, /non-enumerable element/)
     })
-    it('should count dropped {} elements of $and in the node budget', function() {
+    it('should reject a huge $and list at once (length limit 1000 comes before any element is read)', function() {
         let big = Array.from({ length: 150001 }, (_, i) => (i === 150000 ? { name: 'aa' } : {}))
-        throwsFind({ $and: big }, /too large/)
+        throwsFind({ $and: big }, /array is too large/)
     })
 })
 
@@ -860,8 +1074,10 @@ describe('cvFind / cvOrder: only errors built by this module are rethrown as is 
         catch (err) {
             e = err
         }
+        assert.ok(e instanceof Error)
         assert.notStrictEqual(e, mine)
-        assert.ok(/^invalid find: invalid find: pretend at \[find\]$/.test(e.message), e.message)
+        assert.ok(/^invalid find: .+ at \[.*\]$/.test(e.message), e.message)
+        assert.ok(!/pretend/.test(e.message), `must not echo what the caller hook threw: ${e.message}`) //cvOrmFind 不轉述呼叫端之錯誤訊息
     })
     it('should turn the same forged object into "invalid order" in cvOrder', function() {
         let forged = { message: 'invalid find: forged' }
