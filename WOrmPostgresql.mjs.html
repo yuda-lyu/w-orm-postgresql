@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dateTimeOf">dateTimeOf</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isBufferValue">isBufferValue</a></li><li><a href="global.html#isCleanStr">isCleanStr</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isDateValue">isDateValue</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
     
 </nav>
 
@@ -46,7 +46,6 @@
     <section>
         <article>
             <pre class="prettyprint source linenums"><code>import pg from 'pg'
-import mongoSql from 'mongo-sql'
 import size from 'lodash-es/size.js'
 import get from 'lodash-es/get.js'
 import map from 'lodash-es/map.js'
@@ -65,7 +64,19 @@ import isbol from 'wsemi/src/isbol.mjs'
 import evem from 'wsemi/src/evem.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
 import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf, isCleanStr } from './cvFind.mjs'
-import { genInsert, genConflict, cvColumns, quoteTable, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
+import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
+import { eqNode } from './lowerFind.mjs'
+import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
+
+
+//pgBools, PostgreSQL boolean輸入字串之對照(去空白、不分大小寫; PG接受唯一前綴), 供insert之returnList比對輸入主鍵與BOOLEAN欄回傳值; null原型避免繼承名稱
+let pgBools = Object.create(null)
+;['t', 'tr', 'tru', 'true', 'y', 'ye', 'yes', 'on', '1'].forEach((s) => {
+    pgBools[s] = true
+})
+;['f', 'fa', 'fal', 'fals', 'false', 'n', 'no', 'of', 'off', '0'].forEach((s) => {
+    pgBools[s] = false
+})
 
 
 /**
@@ -82,7 +93,7 @@ import { genInsert, genConflict, cvColumns, quoteTable, quoteKey, isColumnName, 
  * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，預設'postgresql://127.0.0.1:5432'
  * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，預設'worm'
  * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，預設'test'
- * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)，不合者建構拋出Error('invalid opt.pk')，預設'time'
+ * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)且不得為系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)，不合者建構拋出Error('invalid opt.pk')，預設'time'
  * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
  */
@@ -122,20 +133,19 @@ function WOrmPostgresql(opt = {}) {
         pkName = 'time'
     }
     else if (!isColumnName(pkName)) {
-        throw new Error('invalid opt.pk: must be a plain identifier (letters, digits, underscore; not starting with a digit; up to 63 bytes)')
+        throw new Error(isSysCol(pkName) ? 'invalid opt.pk: system column names (ctid, tableoid, xmin, xmax, cmin, cmax) are not supported' : 'invalid opt.pk: must be a plain identifier (letters, digits, underscore; not starting with a digit; up to 63 bytes)')
     }
 
     //checkPk, 判定主鍵值是否有效
     //因主鍵欄位得由呼叫端指定, 其型別隨欄位而異, 故此處僅要求有給值而不限定型別,
     //型別與欄位不符者由PostgreSQL回報, 各函數再依其規格處置
-    //僅接受原始值(字串、數值、布林)與真Date(內部槽判定), 包裝物件(Object(5)等)與其他物件一律無效:
-    //mongo-sql對無可列舉鍵之物件值會丟棄該條件, 令delete無where而刪全表
+    //僅接受原始值(字串、數值、布林)與真Date(內部槽判定), 包裝物件(Object(5)等)與其他物件一律無效(非純量值不得進入條件)
     function checkPk(pkv) {
         let t = typeof pkv
         if (t === 'string') {
-            //首尾皆$之字串會被mongo-sql當成欄引用(如'$time$'令where變為time=time而命中全部), 視為無效主鍵值;
-            //含NUL或孤立代理字元者亦無效(後者經UTF-8送出會變為U+FFFD, 令del誤刪主鍵為U+FFFD之列)
-            return isestr(pkv) &amp;&amp; !(pkv[0] === '$' &amp;&amp; pkv[pkv.length - 1] === '$') &amp;&amp; isCleanStr(pkv)
+            //含NUL或孤立代理字元者無效(後者經UTF-8送出會變為U+FFFD, 令del誤刪主鍵為U+FFFD之列);
+            //首尾皆$之字串為一般字面值(主鍵值恆為綁定參數, 不具引用義)
+            return isestr(pkv) &amp;&amp; isCleanStr(pkv)
         }
         if (t === 'number') {
             return isnum(pkv)
@@ -158,7 +168,7 @@ function WOrmPostgresql(opt = {}) {
         return v[pkName]
     }
 
-    //cleanPk, 交給mongo-sql前取主鍵值之乾淨複本(Date以內部槽重建, 令其不帶呼叫端附加之屬性)
+    //cleanPk, 組成條件前取主鍵值之乾淨複本(Date以內部槽重建, 令其不帶呼叫端附加之屬性)
     function cleanPk(pkv) {
         let ms = dateTimeOf(pkv)
         return ms === undefined ? pkv : new Date(ms)
@@ -207,16 +217,10 @@ function WOrmPostgresql(opt = {}) {
         })
     }
 
-    //qry, 交給mongo-sql之查詢規格物件一律為null原型:
-    //mongo-sql以query[key]讀取limit、columns、expression等選項, 一般物件會繼承Object.prototype上被汙染之同名屬性
-    function qry(spec) {
-        return Object.assign(Object.create(null), spec)
-    }
-
     //pgq, 組成pg之查詢設定物件(DDL與交易控制語句除外之所有語句皆經此):
     //  1. null原型: pg以一般物件讀取name、rowMode、types、binary等設定, 一般物件會繼承被汙染之Object.prototype同名屬性
     //  2. queryMode恆為extended: 無綁定參數時pg預設走simple protocol而可堆疊執行多語句, extended協定由伺服器拒絕多語句,
-    //     令即使mongo-sql因呼叫端環境異常(如純量值之原型被汙染)產出非預期語句, 亦不致堆疊執行
+    //     令即使產出之語句因呼叫端環境異常(如表名等建構設定被置入片段)含多語句, 亦不致堆疊執行
     function pgq(text, values) {
         let c = Object.create(null)
         c.text = text
@@ -224,25 +228,6 @@ function WOrmPostgresql(opt = {}) {
         c.queryMode = 'extended'
         return c
     }
-
-    //sqlOf, 呼叫mongo-sql產生select/delete語句(查詢規格以qry建為null原型; where須由呼叫端給null原型物件)
-    function sqlOf(spec) {
-        return mongoSql.sql(qry(spec))
-    }
-
-    //ninOk, mongo-sql以RegExp(含表名)改寫$nin, 表名含正規式特殊字元(如$)時改寫失配而$nin靜默變成$in,
-    //故以實際產出自檢($nin之產出須恰為$in之產出把' in ('換成' not in ('; 不可只測有無'not in', 表名本身可含該字樣), 失配者令cvFind拒收$nin
-    let ninOk = (() => {
-        try {
-            let mk = (op) => mongoSql.sql(qry({ type: 'select', table: cl, where: Object.assign(Object.create(null), { c: Object.assign(Object.create(null), { [op]: [1] }) }) })).query
-            let qIn = mk('$in')
-            let qNin = mk('$nin')
-            return qNin === qIn.replace(' in (', ' not in (') &amp;&amp; qNin !== qIn
-        }
-        catch (err) {
-            return false
-        }
-    })()
 
     //isErrPkType, 判定錯誤是否為[主鍵值型別與欄位不符]
     //22P02為invalid_text_representation, 22007為invalid_datetime_format
@@ -429,7 +414,7 @@ function WOrmPostgresql(opt = {}) {
             //each batch
             for (let dt of ltdata) {
 
-                //mr, 手寫參數化INSERT, 所有值皆以綁定參數送出(不經mongo-sql之values輔助, 見cvWrite)
+                //mr, 手寫參數化INSERT, 所有值皆以綁定參數送出(見cvWrite)
                 let mr = genInsert(cl, dt)
 
                 //sql
@@ -484,10 +469,21 @@ function WOrmPostgresql(opt = {}) {
         //isDateCol, 以回傳值之實際型別判定
         let isDateCol = size(rows) > 0 &amp;&amp; rows[0][pkName] instanceof Date
 
+        //pkType, 回傳主鍵值之JS型別(number為INTEGER/SMALLINT/REAL/DOUBLE PRECISION, boolean為BOOLEAN; 其餘如文字、BIGINT與NUMERIC皆為字串)
+        let pkType = size(rows) > 0 ? typeof rows[0][pkName] : ''
+
         //normPk
+        //輸入為字串而欄位為數值或布林時(如INTEGER欄輸入'01'、' 3 ',BOOLEAN欄輸入't'、'0'), PG會依欄位型別轉換後寫入, 回傳值為轉換後之number/boolean,
+        //故輸入側須做同樣轉換才比得上; 文字欄位(回傳為字串)維持原值, 不做任何轉換
         let normPk = (v) => {
             if (isDateCol) {
                 return new Date(v).toISOString()
+            }
+            if (typeof v === 'string' &amp;&amp; pkType === 'number' &amp;&amp; v.trim() !== '' &amp;&amp; !Number.isNaN(Number(v))) {
+                return String(Number(v))
+            }
+            if (typeof v === 'string' &amp;&amp; pkType === 'boolean' &amp;&amp; pgBools[v.trim().toLowerCase()] !== undefined) {
+                return String(pgBools[v.trim().toLowerCase()])
             }
             return String(v)
         }
@@ -626,7 +622,7 @@ function WOrmPostgresql(opt = {}) {
     /**
      * 查詢數據
      *
-     * find僅支援系列白名單(規則同delAll，兩者共用同一檢核，檢核由wsemi之cvOrmFind擁有，再做PostgreSQL專屬轉譯)，
+     * find僅支援系列白名單(規則同delAll，兩者共用同一檢核，檢核由wsemi之cvOrmFind擁有，再轉為方言中立IR並以knex建構PostgreSQL語句)，
      * 不支援或無法轉譯者一律整批reject(訊息為invalid find: 原因 at [路徑])，且於連線與送出任何SQL之前reject，不靜默忽略:
      * 1. 未給、undefined或{}回傳全部數據；傳了值卻不是條件物件(null、陣列含[]與[{...}]、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等)
      *    一律reject，不視為{}。
@@ -636,13 +632,13 @@ function WOrmPostgresql(opt = {}) {
      * 3. 白名單外一律reject，如$not $nor $regex $options $exists $where $expr $like $ilike $null $notNull $equals $custom、子查詢、欄位層$and/$or、
      *    JSON取值鍵(js->>k)與轉型鍵(v::text)、undefined、bigint、Buffer、NaN、RegExp、函數、Symbol鍵、空的$nin/$and/$or、$in/$nin含null等。
      *    單一find上限: 巢狀32層、$and/$or 1000項、$in/$nin 10000項、節點100000個、綁定參數65535個。
-     *    欄位是否存在由PostgreSQL回報，但與資料表同名之系統欄(ctid、xmin、xmax、cmin、cmax、tableoid)與接受整列為引數之函數名
-     *    (如concat)不會被回報為欄位不存在，而是以整列求值(條件可能對全部數據成立)，欄名請拼寫確認。
+     *    欄是否存在由PostgreSQL回報(42703)：欄名一律未限定引用且資料表加固定別名，故拼錯之欄名即使恰為函數名(如concat、to_json)或與資料表同名，
+     *    亦回報欄位不存在，不會對整列求值；PG保證不可建立同名欄之系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)一律reject(invalid find)。
+     *    限制: 視圖輸出欄若取名同系統欄名亦被拒；欄名上限63 bytes以UTF-8計，須為UTF8伺服器編碼；支援PostgreSQL 12以上。
      * 4. 語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
      *    需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。
-     * 5. 首尾皆$之字串(mongo-sql視為欄引用)於等值、$eq、$ne、$in、$nin為字面值，於$gt $gte $lt $lte不支援；
-     *    表名含正規式特殊字元(如$)而令$nin改寫失配時，$nin與給首尾$字串之$ne會reject。
-     * order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
+     * 5. 字串值一律為字面值(綁定參數)，首尾皆$之字串亦然，於所有比較運算子(等值、$eq、$ne、$gt $gte $lt $lte、$in、$nin)皆不具欄引用義，與表名無關。
+     * order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同文法(僅識別字，不接受JSON取值鍵->、->>與::轉型鍵)。
      * 詳見README〈條件(find)白名單〉與CLAUDE_rulebook.md〈條件(find)之支援範圍〉。
      *
      * @memberOf WOrmPostgresql
@@ -657,7 +653,7 @@ function WOrmPostgresql(opt = {}) {
         //check, 條件與排序先於快取與連線檢核並正規化(不支援者reject, 見cvFind), 其後一律只用正規化複本,
         //令select與delAll經同一檢核(同一find命中即刪除), 且快取鍵不因無效值而與其他條件混同
         try {
-            find = cvFind(find, { nin: ninOk })
+            find = cvFind(find)
             order = cvOrder(order)
         }
         catch (err) {
@@ -674,6 +670,16 @@ function WOrmPostgresql(opt = {}) {
             if (isarr(cache)) {
                 return cache
             }
+        }
+
+        //mr, 建句與驗證先於連線(S11): 失敗屬整批性錯誤, 不建立 pg.Client
+        let mr = null
+        try {
+            mr = buildSelect(cl, find, order)
+        }
+        catch (err) {
+            emitError('select', null, err)
+            return Promise.reject(err)
         }
 
         //client
@@ -704,13 +710,7 @@ function WOrmPostgresql(opt = {}) {
         try {
 
             //mr
-            let mr = sqlOf({
-                type: 'select',
-                table: cl,
-                where: find,
-                // limit: 10,
-                order,
-            })
+            //mr 已於連線前建立
             // console.log('mr', mr)
             // console.log('mr.query', mr.query)
             // console.log('mr.values', mr.values)
@@ -778,13 +778,11 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //find, 以建構時設定之主鍵欄位查找, 與insert、save、del、genConflict之認定一致
-        let find = qry({
-            [pkName]: cleanPk(pk),
-        })
+        let find = eqNode(pkName, cleanPk(pk))
 
         //cache, 與select共用快取, 因快取鍵值由find與order組成, 故此處等同select(find)之結果
         if (useCache) {
-            let cache = getCache(find, {})
+            let cache = getCache(find, [])
             if (isarr(cache)) {
                 return get(cache, 0, null)
             }
@@ -819,11 +817,7 @@ function WOrmPostgresql(opt = {}) {
 
             //mr, 不使用limit以令結果與select(find)完全等價, 方能安全共用快取,
             //time為主鍵時本就僅回傳1筆, 不會因此多拉數據
-            let mr = sqlOf({
-                type: 'select',
-                table: cl,
-                where: find,
-            })
+            let mr = buildSelect(cl, find)
             // console.log('mr', mr)
             // console.log('mr.query', mr.query)
             // console.log('mr.values', mr.values)
@@ -842,7 +836,7 @@ function WOrmPostgresql(opt = {}) {
 
             //cache
             if (useCache) {
-                setCache(find, {}, rows)
+                setCache(find, [], rows)
             }
 
             //v
@@ -894,7 +888,7 @@ function WOrmPostgresql(opt = {}) {
      *
      * 預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
      * 全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
-     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串不是有效主鍵值(mongo-sql視為欄引用)。
+     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串為一般字面值(主鍵值恆為綁定參數，不具引用義)。
      * INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。
      *
      * option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
@@ -1239,15 +1233,7 @@ function WOrmPostgresql(opt = {}) {
                 if (true) {
 
                     //mr
-                    let mr = sqlOf({
-                        type: 'select',
-                        table: cl,
-                        where: qry({
-                            [pkName]: cleanPk(pkv),
-                        }),
-                        // limit: 10,
-                        // order,
-                    })
+                    let mr = buildSelect(cl, eqNode(pkName, cleanPk(pkv)))
                     // console.log('mr', mr)
                     // console.log('mr.query', mr.query)
                     // console.log('mr.values', mr.values)
@@ -1325,7 +1311,7 @@ function WOrmPostgresql(opt = {}) {
                     //由PostgreSQL於單一語句內原子完成[查找time]與[插入或更新],
                     //併發時不會因他方已先插入同一time而報錯, 亦不會有兩方各自讀到同一舊值再各自寫入
 
-                    //mr, 手寫參數化INSERT, 所有值皆以綁定參數送出(不經mongo-sql之values輔助, 見cvWrite);
+                    //mr, 手寫參數化INSERT, 所有值皆以綁定參數送出(見cvWrite);
                     //conflict, ON CONFLICT子句與INSERT欄單同一來源: 主鍵名與更新欄皆雙引號引用, 值為undefined之鍵不進SET(R9, W5)
                     let mr = null
                     let conflict = null
@@ -1425,18 +1411,17 @@ function WOrmPostgresql(opt = {}) {
                     //未開啟autoInsert則僅能更新既有數據, 不可用INSERT以免無中生有,
                     //由UPDATE...WHERE主鍵原子完成[查找主鍵]與[更新], 併發時不會遺失更新
 
-                    //手寫參數化SQL, 所有值皆以綁定參數送出, 不經mongo-sql之update:
-                    //其對字串值經parameterize(首尾皆$者視為欄引用而存入他欄之值)、對資料鍵$inc/$dec/$custom直通原始SQL、
-                    //對帶type鍵之物件值視為子查詢; 欄名鍵已於checkData檢核為識別字, 引號沿用mongo-sql之quoteObject
+                    //手寫參數化SQL, 所有值皆以綁定參數送出(字串值含首尾皆$者皆為字面值, 資料鍵$inc/$dec/$custom不具特殊意義, 帶type鍵之物件值為一般值);
+                    //欄名鍵已於checkData檢核為識別字, 以quoteKey雙引號引用
                     let sets = []
                     let vals = []
                     let rec = ownData(v)
                     keys(rec).forEach((k) => {
                         if (rec[k] === undefined) {
-                            return //與mongo-sql一致, undefined不更新該欄
+                            return //undefined不更新該欄
                         }
                         vals.push(rec[k])
-                        sets.push(`${mongoSql.quoteObject(k)} = $${size(vals)}`)
+                        sets.push(`${quoteKey(k)} = $${size(vals)}`)
                     })
 
                     //沒有可更新之欄位時該筆回報失敗(原由資料庫回報語法錯誤)
@@ -1460,7 +1445,7 @@ function WOrmPostgresql(opt = {}) {
                     //mr
                     vals.push(cleanPk(pkv))
                     let mr = {
-                        query: `update ${quoteTable(cl)} set ${sets.join(', ')} where ${mongoSql.quoteObject(pkName, cl)} = $${size(vals)}`,
+                        query: `update ${quoteTable(cl)} set ${sets.join(', ')} where ${quoteKey(pkName)} = $${size(vals)}`,
                         values: vals,
                     }
                     // console.log('mr', mr)
@@ -1634,8 +1619,7 @@ function WOrmPostgresql(opt = {}) {
                 //pkv, 只讀自有主鍵: 繼承值(原型汙染、類別原型getter)視為缺主鍵(R10, W8)
                 let pkv = ownPk(v)
 
-                //check pk, 未帶有效主鍵者不補值亦不送查詢,
-                //因mongo-sql會將無效值轉為null而誤中其他數據, 故直接視為該筆無法處理
+                //check pk, 未帶有效主鍵者不補值亦不送查詢, 直接視為該筆無法處理
                 if (!checkPk(pkv)) {
 
                     //rest
@@ -1653,13 +1637,7 @@ function WOrmPostgresql(opt = {}) {
                 }
 
                 //mr
-                let mr = sqlOf({
-                    type: 'delete',
-                    table: cl,
-                    where: qry({
-                        [pkName]: cleanPk(pkv),
-                    }),
-                })
+                let mr = buildDelete(cl, eqNode(pkName, cleanPk(pkv)))
                 // console.log('mr', mr)
                 // console.log('mr.query', mr.query)
                 // console.log('mr.values', mr.values)
@@ -1745,6 +1723,9 @@ function WOrmPostgresql(opt = {}) {
      *    空的$nin會reject，$in:[]則為恆假(刪除0筆)。
      * 6. 語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
      *    需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。
+     * 7. 欄名一律未限定引用且資料表加固定別名，故拼錯之欄名即使恰為函數名(如concat、to_json)或與資料表同名，皆由PostgreSQL回報欄位不存在(42703)
+     *    而不刪除任何數據；系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)一律以invalid find整批reject。
+     *    限制: 視圖輸出欄若取名同系統欄名亦被拒；欄名上限63 bytes以UTF-8計，須為UTF8伺服器編碼；支援PostgreSQL 12以上。
      *
      * n與nDeleted皆為實際刪除筆數，不取全表筆數。條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
      * 檢核錯誤以Error物件reject；資料庫錯誤以錯誤訊息字串reject(既有行為)。
@@ -1759,13 +1740,23 @@ function WOrmPostgresql(opt = {}) {
 
         //check, 條件先於連線檢核並正規化(不支援者reject且不刪除任何數據, 見cvFind), 與select經同一檢核
         try {
-            find = cvFind(find, { nin: ninOk })
+            find = cvFind(find)
         }
         catch (err) {
 
             //emit, 整批性錯誤於reject之前發出, 無輸入數據故data為null
             emitError('delAll', null, err)
 
+            return Promise.reject(err)
+        }
+
+        //mr, 建句與驗證先於連線(S11)
+        let mr = null
+        try {
+            mr = buildDelete(cl, find)
+        }
+        catch (err) {
+            emitError('delAll', null, err)
             return Promise.reject(err)
         }
 
@@ -1811,11 +1802,7 @@ function WOrmPostgresql(opt = {}) {
             // }
 
             //mr
-            let mr = sqlOf({
-                type: 'delete',
-                table: cl,
-                where: find,
-            })
+            //mr 已於連線前建立
             // console.log('mr', mr)
             // console.log('mr.query', mr.query)
             // console.log('mr.values', mr.values)
@@ -1898,7 +1885,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 02:01:06 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

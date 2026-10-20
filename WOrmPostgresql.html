@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dateTimeOf">dateTimeOf</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isBufferValue">isBufferValue</a></li><li><a href="global.html#isCleanStr">isCleanStr</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isDateValue">isDateValue</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
     
 </nav>
 
@@ -85,7 +85,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line42">line 42</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line53">line 53</a>
     </li></ul></dd>
     
 
@@ -377,7 +377,7 @@
                 </td>
             
 
-            <td class="description last"><p>輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)，不合者建構拋出Error('invalid opt.pk')，預設'time'</p></td>
+            <td class="description last"><p>輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)且不得為系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)，不合者建構拋出Error('invalid opt.pk')，預設'time'</p></td>
         </tr>
 
     
@@ -519,7 +519,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line487">line 487</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line483">line 483</a>
     </li></ul></dd>
     
 
@@ -776,7 +776,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1527">line 1527</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1512">line 1512</a>
     </li></ul></dd>
     
 
@@ -947,6 +947,9 @@ null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $r
 空的$nin會reject，$in:[]則為恆假(刪除0筆)。</li>
 <li>語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
 需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。</li>
+<li>欄名一律未限定引用且資料表加固定別名，故拼錯之欄名即使恰為函數名(如concat、to_json)或與資料表同名，皆由PostgreSQL回報欄位不存在(42703)
+而不刪除任何數據；系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)一律以invalid find整批reject。
+限制: 視圖輸出欄若取名同系統欄名亦被拒；欄名上限63 bytes以UTF-8計，須為UTF8伺服器編碼；支援PostgreSQL 12以上。</li>
 </ol>
 <p>n與nDeleted皆為實際刪除筆數，不取全表筆數。條件無命中時回{n:0,nDeleted:0,ok:1}，不視為錯誤。
 檢核錯誤以Error物件reject；資料庫錯誤以錯誤訊息字串reject(既有行為)。</p></li></ul></dd>
@@ -955,7 +958,7 @@ null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $r
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1709">line 1709</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1690">line 1690</a>
     </li></ul></dd>
     
 
@@ -1130,7 +1133,7 @@ null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $r
     <dd class="tag-description"><ul class="dummy"><li><p>插入數據，僅於主鍵不存在時寫入，已存在者跳過且不覆寫</p>
 <p>預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
 全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
-因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串不是有效主鍵值(mongo-sql視為欄引用)。
+因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串為一般字面值(主鍵值恆為綁定參數，不具引用義)。
 INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。</p>
 <p>option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
 而非僅知[有幾筆]。各元素之n恆為1、ok恆為1，因insert之任何錯誤皆屬整批性錯誤而reject，
@@ -1141,7 +1144,7 @@ INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSON
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line865">line 865</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line859">line 859</a>
     </li></ul></dd>
     
 
@@ -1435,7 +1438,7 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1000">line 1000</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line994">line 994</a>
     </li></ul></dd>
     
 
@@ -1606,7 +1609,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1124">line 1124</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1118">line 1118</a>
     </li></ul></dd>
     
 
@@ -1888,7 +1891,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>查詢數據</p>
-<p>find僅支援系列白名單(規則同delAll，兩者共用同一檢核，檢核由wsemi之cvOrmFind擁有，再做PostgreSQL專屬轉譯)，
+<p>find僅支援系列白名單(規則同delAll，兩者共用同一檢核，檢核由wsemi之cvOrmFind擁有，再轉為方言中立IR並以knex建構PostgreSQL語句)，
 不支援或無法轉譯者一律整批reject(訊息為invalid find: 原因 at [路徑])，且於連線與送出任何SQL之前reject，不靜默忽略:</p>
 <ol>
 <li>未給、undefined或{}回傳全部數據；傳了值卻不是條件物件(null、陣列含[]與[{...}]、字串、數值、布林、函數、Date、RegExp、Map、Set、類別實例等)
@@ -1899,13 +1902,13 @@ null僅可用於欄位等值、$eq、$ne。欄名為識別字(字母或底線開
 <li>白名單外一律reject，如$not $nor $regex $options $exists $where $expr $like $ilike $null $notNull $equals $custom、子查詢、欄位層$and/$or、
 JSON取值鍵(js-&gt;&gt;k)與轉型鍵(v::text)、undefined、bigint、Buffer、NaN、RegExp、函數、Symbol鍵、空的$nin/$and/$or、$in/$nin含null等。
 單一find上限: 巢狀32層、$and/$or 1000項、$in/$nin 10000項、節點100000個、綁定參數65535個。
-欄位是否存在由PostgreSQL回報，但與資料表同名之系統欄(ctid、xmin、xmax、cmin、cmax、tableoid)與接受整列為引數之函數名
-(如concat)不會被回報為欄位不存在，而是以整列求值(條件可能對全部數據成立)，欄名請拼寫確認。</li>
+欄是否存在由PostgreSQL回報(42703)：欄名一律未限定引用且資料表加固定別名，故拼錯之欄名即使恰為函數名(如concat、to_json)或與資料表同名，
+亦回報欄位不存在，不會對整列求值；PG保證不可建立同名欄之系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)一律reject(invalid find)。
+限制: 視圖輸出欄若取名同系統欄名亦被拒；欄名上限63 bytes以UTF-8計，須為UTF8伺服器編碼；支援PostgreSQL 12以上。</li>
 <li>語意差異(SQL式，見README): $ne、$nin(含布林$ne)不命中欄位為NULL之數據(三值邏輯)；MongoDB式後端則會命中。
 需明確表達時可用可攜寫法: 排除NULL為{$and:[{f:{$ne:null}},{f:{$ne:x}}]}，含NULL為{$or:[{f:null},{f:{$ne:x}}]}。</li>
-<li>首尾皆$之字串(mongo-sql視為欄引用)於等值、$eq、$ne、$in、$nin為字面值，於$gt $gte $lt $lte不支援；
-表名含正規式特殊字元(如$)而令$nin改寫失配時，$nin與給首尾$字串之$ne會reject。
-order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
+<li>字串值一律為字面值(綁定參數)，首尾皆$之字串亦然，於所有比較運算子(等值、$eq、$ne、$gt $gte $lt $lte、$in、$nin)皆不具欄引用義，與表名無關。
+order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同文法(僅識別字，不接受JSON取值鍵-&gt;、-&gt;&gt;與::轉型鍵)。
 詳見README〈條件(find)白名單〉與CLAUDE_rulebook.md〈條件(find)之支援範圍〉。</li>
 </ol></li></ul></dd>
     
@@ -1913,7 +1916,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line606">line 606</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line602">line 602</a>
     </li></ul></dd>
     
 
@@ -2297,7 +2300,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)。
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 02:01:06 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
