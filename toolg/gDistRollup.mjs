@@ -14,12 +14,12 @@ rollupFiles({
     globals: {
         'events': 'events',
         'pg': 'pg',
-        'mongo-sql': 'mongo-sql',
+        'knex': 'knex',
     },
     external: [
         'events',
         'pg',
-        'mongo-sql',
+        'knex',
     ],
 })
 

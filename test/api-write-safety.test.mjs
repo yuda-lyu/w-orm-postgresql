@@ -11,8 +11,10 @@ import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 //  W1 insert, insertBulk, save 之物件值(含帶 type 鍵者)以 JSON 原樣寫入, 不被當成子查詢, 不得跨表讀取
 //  W2 save(..,{autoInsert:false}) 之 UPDATE 以綁定參數寫入字面值($..$ 字串, 資料鍵 $inc/$dec/$custom 不得生效),
 //     非識別字之欄名鍵整批 reject
-//  W3 首尾皆 $ 之主鍵值為無效主鍵
+//  W3 包裝物件(Object(5) 等)、非 Date 物件、裝飾過之 Date 之主鍵值為無效主鍵(首尾皆 $ 之字串已改為一般字面值, 見 S6)
 //  S5 整批 reject 時資料不變, 於 reject 前發一次 error 事件, reject 之值為 Error
+//  S6 以主鍵值構成之條件不得因主鍵值為 $..$ 字串而命中全部(新版: $..$ 主鍵值為一般字面值, 恆為綁定參數)
+//行為變更(mongo-sql → knex): 欄名 Infinity 合法; 系統欄名 ctid tableoid xmin xmax cmin cmax 拒收; 預引號表名可用於所有函數; $nin 不再受表名限制
 
 
 let ctName = 'worm-test-postgresql-write'
@@ -42,6 +44,24 @@ let row = async (time) => (await admin.query(`SELECT * FROM ${CL} WHERE time = $
 let mk = (opt = {}) => WOrm({ url: ct.url, db: ct.db, cl: CL, ...opt })
 let settle = (p) => p.then((v) => ({ ok: true, v })).catch((e) => ({ ok: false, e }))
 let jtext = (o) => JSON.stringify(o)
+//capture, 擷取送給 pg 之設定物件(text、values), 交易控制字串略過
+let capture = async (fn) => {
+    let seen = []
+    let orig = pg.Client.prototype.query
+    pg.Client.prototype.query = function(cfg, ...rest) {
+        if (typeof cfg !== 'string') {
+            seen.push([cfg.text, cfg.values])
+        }
+        return orig.call(this, cfg, ...rest)
+    }
+    try {
+        await fn()
+    }
+    finally {
+        pg.Client.prototype.query = orig
+    }
+    return seen
+}
 
 
 before(async function() {
@@ -256,6 +276,13 @@ describe('write: save UPDATE path (autoInsert:false) uses bound parameters (W2)'
         ['JSON path', { 'time': 1, 'js->>k': 'x' }],
         ['cast', { 'time': 1, 'n::text': 'x' }],
         ['longer than 63 bytes', { time: 1, ['c'.repeat(64)]: 'x' }],
+        //行為變更 3: 系統欄名(未限定引用時會解析為系統欄)整批 reject
+        ['system column ctid', { time: 1, ctid: '(0,1)' }],
+        ['system column tableoid', { time: 1, tableoid: 1 }],
+        ['system column xmin', { time: 1, xmin: 1 }],
+        ['system column xmax', { time: 1, xmax: 1 }],
+        ['system column cmin', { time: 1, cmin: 1 }],
+        ['system column cmax', { time: 1, cmax: 1 }],
     ]
     badKeys.forEach(([label, d]) => {
         it(`should reject whole batch and write nothing for data key ${label}`, async function() {
@@ -328,54 +355,100 @@ describe('write: save UPDATE path (autoInsert:false) uses bound parameters (W2)'
 })
 
 
-describe('write: pk values that start and end with "$" are invalid (W3)', function() {
-    it('should reject insert and insertBulk for pk "$x$" and write nothing', async function() {
+//S6(新版, 行為變更 1): 首尾皆 $ 之主鍵值為一般字面值(恆為綁定參數), insert/insertBulk/save/del/selectByPk 皆如一般主鍵運作,
+//不具欄引用義, 故不得命中其他列(不得成為 "time" = "time" 而命中全部). 原 W3「$..$ 主鍵為無效主鍵」已廢止.
+describe('write: pk values that start and end with "$" are ordinary literal values and never hit other rows (S6, was W3)', function() {
+    //TEXT 主鍵表(主鍵名 time, 同預設 opt.pk): 若 '$time$' 被當欄引用則條件為 "time" = "time", 命中全部
+    let CLS = 'twrite_tpk'
+    let mks = () => mk({ cl: CLS })
+    let rowsS = async () => (await admin.query(`SELECT time, name FROM ${CLS} ORDER BY time COLLATE "C"`)).rows.map((x) => [x.time, x.name])
+    let resetS = async () => {
+        await admin.query(`DROP TABLE IF EXISTS ${CLS}`)
+        await admin.query(`CREATE TABLE ${CLS} (time TEXT PRIMARY KEY, name TEXT)`)
+        await admin.query(`INSERT INTO ${CLS} VALUES ('a', 'A'), ('b', 'B'), ('c', 'C')`)
+    }
+    after(async function() {
+        await admin.query(`DROP TABLE IF EXISTS ${CLS}`)
+    })
+
+    it('should insert and insertBulk rows whose pk is "$x$" literally (TEXT pk)', async function() {
+        await resetS()
+        let wo = mks()
+        let a = await wo.insert({ time: '$x$', name: 'X' })
+        let b = await wo.insertBulk([{ time: '$time$', name: 'T' }, { time: '$', name: 'D1' }, { time: '$$', name: 'D2' }])
+        assert.deepStrictEqual(a, { n: 1, nInserted: 1, ok: 1 })
+        assert.strictEqual(b.nInserted, 3)
+        assert.deepStrictEqual(await rowsS(), [['$', 'D1'], ['$$', 'D2'], ['$time$', 'T'], ['$x$', 'X'], ['a', 'A'], ['b', 'B'], ['c', 'C']])
+        let c = await wo.insert({ time: '$x$', name: 'X2' }) //已存在者跳過(與一般主鍵同)
+        assert.strictEqual(c.nInserted, 0)
+    })
+
+    it('should get the row whose pk is literally "$time$" by selectByPk, and null when no such literal pk exists (not the first row of the table)', async function() {
+        await resetS()
+        let wo = mks()
+        assert.strictEqual(await wo.selectByPk('$time$'), null) //S6 若當欄引用則回第一列
+        assert.strictEqual(await wo.selectByPk('$name$'), null)
+        await wo.insert({ time: '$time$', name: 'T' })
+        assert.deepStrictEqual(await wo.selectByPk('$time$'), { time: '$time$', name: 'T' })
+        assert.strictEqual((await wo.selectByPk('a')).name, 'A')
+    })
+
+    it('should delete only the row whose pk is literally "$time$" (del), and nothing when it does not exist', async function() {
+        await resetS()
+        let wo = mks()
+        let d0 = await wo.del({ time: '$time$' })
+        assert.deepStrictEqual(d0, [{ n: 0, nDeleted: 0, ok: 1 }]) //S6 未命中, 不得刪全表
+        assert.deepStrictEqual(await rowsS(), [['a', 'A'], ['b', 'B'], ['c', 'C']])
+        await wo.insert([{ time: '$time$', name: 'T' }, { time: '$name$', name: 'N' }])
+        let d1 = await wo.del([{ time: '$time$' }, { time: '$' }])
+        assert.deepStrictEqual(d1.map((x) => [x.ok, x.nDeleted]), [[1, 1], [1, 0]])
+        assert.deepStrictEqual(await rowsS(), [['$name$', 'N'], ['a', 'A'], ['b', 'B'], ['c', 'C']]) //只刪字面主鍵之列
+    })
+
+    it('should save (autoInsert true and false) the row whose pk is literally "$x$" and leave the other rows unchanged', async function() {
+        await resetS()
+        let wo = mks()
+        let s0 = await wo.save({ time: '$x$', name: 'q' }, { autoInsert: false })
+        assert.deepStrictEqual(s0, [{ n: 0, nInserted: 0, nModified: 0, ok: 1 }]) //不存在, 不得更新他列
+        let s1 = await wo.save({ time: '$x$', name: 'q' })
+        assert.deepStrictEqual(s1, [{ n: 1, nInserted: 1, nModified: 0, ok: 1 }])
+        let s2 = await wo.save({ time: '$x$', name: 'q2' }, { autoInsert: false })
+        assert.deepStrictEqual(s2, [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }])
+        let s3 = await wo.save({ time: '$x$', name: 'q3' })
+        assert.deepStrictEqual(s3, [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }])
+        assert.deepStrictEqual(await rowsS(), [['$x$', 'q3'], ['a', 'A'], ['b', 'B'], ['c', 'C']])
+    })
+
+    //INTEGER 主鍵表: '$x$' 為一般字面值, 與欄位型別不符由 PostgreSQL 回 22P02, 依各函數既有「型別不符」語意處置; 任一情形皆不得作用於任何列
+    it('should treat "$time$" on an INTEGER pk like any other mistyped pk: selectByPk null, del ok:0 per record, nothing deleted', async function() {
         await reset()
+        let evs = []
         let wo = mk()
+        wo.on('error', (mode) => evs.push(mode))
+        assert.strictEqual(await wo.selectByPk('$time$'), null) //selectByPk: 型別不符(22P02)視為主鍵無效而回 null, 不發 error
+        assert.deepStrictEqual(evs, [])
+        let r = await wo.del([{ time: '$time$' }, { time: '$' }, { time: 2 }])
+        assert.deepStrictEqual(r.map((x) => [x.ok, x.nDeleted]), [[0, 0], [0, 0], [1, 1]]) //del: 逐筆 ok:0, 其餘筆照常
+        assert.ok(/invalid input syntax for type integer/.test(r[0].err), r[0].err)
+        assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 3]) //S6 未刪全表
+    })
+
+    it('should reject insert, insertBulk and save of "$x$" on an INTEGER pk with the PostgreSQL type error and write nothing', async function() {
+        await reset()
+        let evs = []
+        let wo = mk()
+        wo.on('error', (mode) => evs.push(mode))
         let a = await settle(wo.insert({ time: '$x$', name: 'a' }))
         let b = await settle(wo.insertBulk([{ time: 11, name: 'b' }, { time: '$x$', name: 'a' }]))
-        assert.strictEqual(a.ok, false) //W3
-        assert.strictEqual(b.ok, false) //W3
-        assert.ok(/invalid data\[\d\]\.time/.test(a.e.message), a.e.message)
-        assert.strictEqual((await rows()).length, 3)
-    })
-
-    it('should reject save with autoInsert (default) and without for pk "$x$" and write nothing', async function() {
-        await reset()
-        let wo = mk()
-        let evs = []
-        wo.on('error', (mode) => evs.push(mode))
-        let a = await settle(wo.save({ time: '$x$', name: 'a' }))
-        let b = await settle(wo.save([{ time: 5, name: 'ok' }, { time: '$time$', name: 'b' }]))
-        assert.strictEqual(a.ok, false) //W3 autoInsert 分支
-        assert.strictEqual(b.ok, false) //整批性: 第一筆有效亦不寫入
-        assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3])
-        assert.deepStrictEqual(evs, ['save', 'save'])
-    })
-
-    it('should get null for selectByPk and ok:0 for del with pk "$time$"; all rows kept', async function() {
-        await reset()
-        let wo = mk()
-        assert.strictEqual(await wo.selectByPk('$time$'), null)
-        let r = await wo.del([{ time: '$time$' }, { time: '$' }, { time: '$$' }])
-        assert.deepStrictEqual(r.map((x) => x.ok), [0, 0, 0])
-        assert.strictEqual((await rows()).length, 3)
-    })
-
-    it('should handle TEXT pk with "$" inside normally and reject "$..$" pk', async function() {
-        await admin.query('DROP TABLE IF EXISTS tpk')
-        await admin.query('CREATE TABLE tpk (id TEXT PRIMARY KEY, name TEXT)')
-        let wo = WOrm({ url: ct.url, db: ct.db, cl: 'tpk', pk: 'id' })
-        let r = await wo.insert([{ id: 'x$', name: 'a' }, { id: '$y', name: 'b' }, { id: 'z', name: 'c' }])
-        assert.strictEqual(r.nInserted, 3)
-        assert.strictEqual((await wo.selectByPk('x$')).name, 'a') //前後單側 $ 為合法
-        assert.strictEqual(await wo.selectByPk('$x$'), null)
-        let d = await wo.del({ id: '$x$' })
-        assert.strictEqual(d[0].ok, 0)
-        assert.strictEqual((await admin.query('SELECT count(*)::int AS c FROM tpk')).rows[0].c, 3) //W3 不得刪光
-        let s = await settle(wo.save({ id: '$x$', name: 'q' }, { autoInsert: false }))
-        assert.strictEqual(s.ok, false)
-        await admin.query('DROP TABLE tpk')
+        let c = await settle(wo.save({ time: '$x$', name: 'c' }))
+        let d = await settle(wo.save({ time: '$time$', name: 'd' }, { autoInsert: false }))
+        for (let x of [a, b, c, d]) {
+            assert.strictEqual(x.ok, false)
+            assert.strictEqual(x.e && x.e.code, '22P02', String(x.e)) //PG 之型別錯誤, 非本套件之主鍵檢核錯誤
+            assert.ok(!/invalid data\[/.test(x.e.message), x.e.message)
+        }
+        assert.deepStrictEqual(evs, ['insert', 'insertBulk', 'save', 'save'])
+        assert.deepStrictEqual(await rows('time,name'), SEED.map((x) => ({ time: x.time, name: x.name }))) //insertBulk 之有效首筆亦回滾, save 未更新任何列
     })
 })
 
@@ -452,34 +525,64 @@ describe('write: wrapper objects and decorated Dates are invalid pk values (W3)'
         })
     })
 
-    it('should not be affected by Object.prototype pollution of query options (limit, columns, expression, $custom)', async function() {
-        await reset()
-        let wo = mk()
-        Object.prototype.limit = 1
-        Object.prototype.columns = ['1']
-        Object.prototype.expression = 'select 1; select 1; --'
-        Object.prototype.$custom = ['true']
-        let a
-        let b
-        let c
-        let d
-        try {
-            a = await wo.selectByPk(2)
-            b = await wo.select({ name: 'aa' })
-            c = await wo.del({ time: 3 })
-            d = await wo.delAll({ name: 'bb' })
-        }
-        finally {
-            delete Object.prototype.limit
-            delete Object.prototype.columns
-            delete Object.prototype.expression
-            delete Object.prototype.$custom
-        }
-        assert.strictEqual(a.name, 'bb') //W3 完整列, 非 columns 汙染之結果
-        assert.deepStrictEqual(b.map((x) => x.time), [1])
-        assert.strictEqual(c[0].nDeleted, 1)
-        assert.strictEqual(d.n, 1)
-        assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1])
+    //行為變更 8: 資料型汙染 Object.prototype 之查詢選項名(knex 內部以一般物件承載 limit 等)時, 各函數之結果須與無汙染時相同,
+    //或以 invalid find: internal statement check failed (statement check) fail-closed reject; 絕不靜默送出被改寫之語句(不得兩者皆非)
+    let pollutions = [
+        ['limit', 1],
+        ['offset', 1],
+        ['columns', ['1']],
+        ['expression', 'select 1; select 1; --'],
+        ['$custom', ['true']],
+        ['returning', ['name']],
+        ['distinct', true],
+        ['only', true],
+        ['schema', 'tsecret'],
+    ]
+    pollutions.forEach(([k, v]) => {
+        it(`should give the unpolluted result or fail closed with "statement check" when Object.prototype.${k} is polluted (selectByPk, select, del, delAll)`, async function() {
+            await reset()
+            let evs = []
+            let wo = mk()
+            wo.on('error', (mode) => evs.push(mode))
+            let rs
+            let sent
+            Object.prototype[k] = v
+            try {
+                sent = await capture(async () => {
+                    rs = [
+                        await settle(wo.selectByPk(2)),
+                        await settle(wo.select({ name: 'aa' })),
+                        await settle(wo.del({ time: 3 })),
+                        await settle(wo.delAll({ name: 'bb' })),
+                    ]
+                })
+            }
+            finally {
+                delete Object.prototype[k]
+            }
+            //送出之語句(若有)須為無汙染時之語句本身: 結果恰好相同而語句已被改寫(如多了 limit)亦不允許
+            let clean = [
+                'select * from "twrite" as "$t" where "time" = $1',
+                'select * from "twrite" as "$t" where "name" = $1',
+                'delete from "twrite" as "$t" where "time" = $1',
+                'delete from "twrite" as "$t" where "name" = $1',
+            ]
+            sent.forEach(([t]) => {
+                assert.ok(clean.includes(t), t)
+            })
+            assert.strictEqual(sent.length, rs.filter((x) => x.ok).length) //fail-closed 者未送出任何語句
+            let [a, b, c, d] = rs
+            let fc = (x) => !x.ok && x.e instanceof Error && /^invalid find: internal statement check failed \(statement check\)/.test(x.e.message)
+            assert.ok(fc(a) || (a.ok && jtext(a.v) === jtext({ time: 2, name: 'bb', n: 20, tag: 'y', value: 2.5, ok: null, ts: null, js: null, bin: null, arr: null })), `selectByPk ${String(a.e || jtext(a.v))}`)
+            assert.ok(fc(b) || (b.ok && jtext(b.v.map((x) => [x.time, x.name])) === jtext([[1, 'aa']])), `select ${String(b.e || jtext(b.v))}`)
+            assert.ok(fc(c) || (c.ok && jtext(c.v) === jtext([{ n: 1, nDeleted: 1, ok: 1 }])), `del ${String(c.e || jtext(c.v))}`)
+            assert.ok(fc(d) || (d.ok && jtext(d.v) === jtext({ n: 1, nDeleted: 1, ok: 1 })), `delAll ${String(d.e || jtext(d.v))}`)
+            //資料只因成功之 del(time 3)、delAll(name bb → time 2)而少列, 未刪其他列
+            let want = [1, 2, 3].filter((t) => !(t === 3 && c.ok) && !(t === 2 && d.ok))
+            assert.deepStrictEqual((await rows('time')).map((x) => x.time), want)
+            assert.deepStrictEqual(evs, rs.map((x, i) => (x.ok ? null : ['selectByPk', 'select', 'del', 'delAll'][i])).filter((x) => x)) //每個 reject 發 1 次 error
+            assert.strictEqual((await admin.query('SELECT count(*)::int AS n FROM tsecret')).rows[0].n, 1) //他表不受影響
+        })
     })
 })
 
@@ -578,7 +681,7 @@ describe('write: data keys are checked only when they are written (W2, compat)',
 })
 
 
-describe('write: table names (insert, save UPDATE and $nin)', function() {
+describe('write: table names (pre-quoted, schema-qualified, and $nin with odd characters)', function() {
     let before2 = async () => {
         await admin.query('CREATE SCHEMA IF NOT EXISTS rvo')
         await admin.query('DROP TABLE IF EXISTS rvo.dot')
@@ -588,14 +691,30 @@ describe('write: table names (insert, save UPDATE and $nin)', function() {
         await admin.query('INSERT INTO "rvo.dot" VALUES (1, 10)')
     }
 
-    it('should write to the table named by a pre-quoted name, not to a schema-qualified table (like mongo-sql)', async function() {
+    it('should write to the table named by a pre-quoted name, not to a schema-qualified table', async function() {
         await before2()
         let wo = mk({ cl: '"rvo.dot"' })
-        //僅測 insert: 帶條件之 select(含 save 預讀)對含點之預先引號表名由 mongo-sql 自身轉譯失敗(HEAD 亦然, 非本輪範圍)
         let r = await wo.insert({ time: 2, v: 20 })
         assert.strictEqual(r.nInserted, 1)
         assert.deepStrictEqual((await admin.query('SELECT time, v FROM "rvo.dot" ORDER BY time')).rows, [{ time: 1, v: 10 }, { time: 2, v: 20 }])
         assert.deepStrictEqual((await admin.query('SELECT time, v FROM rvo.dot')).rows, []) //另一關係未被寫入
+        await admin.query('DROP TABLE "rvo.dot"')
+        await admin.query('DROP TABLE rvo.dot')
+    })
+
+    it('should use a pre-quoted table name with a dot in select, selectByPk, save, del and delAll too (behavior change 6; was a syntax error)', async function() {
+        await before2()
+        await admin.query('INSERT INTO "rvo.dot" VALUES (2, 20), (3, 30)')
+        let wo = mk({ cl: '"rvo.dot"' })
+        assert.deepStrictEqual((await wo.select({ v: { $gte: 20 } })).map((x) => x.time), [2, 3])
+        assert.deepStrictEqual(await wo.selectByPk(1), { time: 1, v: 10 })
+        assert.deepStrictEqual(await wo.save({ time: 1, v: 11 }), [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }]) //預讀 + UPSERT
+        assert.deepStrictEqual(await wo.save({ time: 2, v: 21 }, { autoInsert: false }), [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }]) //預讀 + UPDATE
+        assert.deepStrictEqual(await wo.del({ time: 3 }), [{ n: 1, nDeleted: 1, ok: 1 }])
+        assert.deepStrictEqual((await admin.query('SELECT time, v FROM "rvo.dot" ORDER BY time')).rows, [{ time: 1, v: 11 }, { time: 2, v: 21 }])
+        assert.deepStrictEqual(await wo.delAll({ v: 21 }), { n: 1, nDeleted: 1, ok: 1 })
+        assert.deepStrictEqual((await admin.query('SELECT time, v FROM "rvo.dot" ORDER BY time')).rows, [{ time: 1, v: 11 }])
+        assert.deepStrictEqual((await admin.query('SELECT time, v FROM rvo.dot')).rows, []) //schema 限定之同名表未被讀寫
         await admin.query('DROP TABLE "rvo.dot"')
         await admin.query('DROP TABLE rvo.dot')
     })
@@ -611,23 +730,23 @@ describe('write: table names (insert, save UPDATE and $nin)', function() {
         await admin.query('DROP TABLE rvo.dot')
     })
 
-    it('should reject $nin on a table whose name breaks the mongo-sql rewrite, keep $in working, and change no data', async function() {
-        await admin.query('DROP TABLE IF EXISTS "rvo|p"')
-        await admin.query('CREATE TABLE "rvo|p" (time INTEGER PRIMARY KEY, c INTEGER)')
-        await admin.query('INSERT INTO "rvo|p" VALUES (1, 1), (2, 2), (3, 3)')
-        let wo = mk({ cl: 'rvo|p' })
-        let evs = []
-        wo.on('error', (mode) => evs.push(mode))
-        let a = await settle(wo.select({ c: { $nin: [1] } }))
-        let b = await settle(wo.delAll({ c: { $nin: [1] } }))
-        assert.strictEqual(a.ok, false)
-        assert.strictEqual(b.ok, false)
-        assert.ok(/\$nin is not supported with this table name/.test(a.e.message), a.e.message)
-        assert.deepStrictEqual(evs, ['select', 'delAll'])
-        let c = await wo.select({ c: { $in: [2] } })
-        assert.deepStrictEqual(c.map((x) => x.time), [2])
-        assert.strictEqual((await admin.query('SELECT count(*)::int AS n FROM "rvo|p"')).rows[0].n, 3)
-        await admin.query('DROP TABLE "rvo|p"')
+    //行為變更 1: $nin 之表名守門(ninOk、opt.nin)已移除; 表名含 | $ ? 等字元時 $nin 照常可用, 且 select 命中者即 delAll 刪除者(S1)
+    let oddNames = ['rvo|p', 'rvo$p', 'rvo?p']
+    oddNames.forEach((name) => {
+        it(`should support $nin (and $in) on table ${JSON.stringify(name)}: select hits exactly the rows that delAll deletes`, async function() {
+            await admin.query(`DROP TABLE IF EXISTS "${name}"`)
+            await admin.query(`CREATE TABLE "${name}" (time INTEGER PRIMARY KEY, c INTEGER)`)
+            await admin.query(`INSERT INTO "${name}" VALUES (1, 1), (2, 2), (3, 3)`)
+            let wo = mk({ cl: name })
+            let evs = []
+            wo.on('error', (mode) => evs.push(mode))
+            assert.deepStrictEqual((await wo.select({ c: { $nin: [1] } })).map((x) => x.time), [2, 3]) //$nin 為 not in, 非 in
+            assert.deepStrictEqual((await wo.select({ c: { $in: [2] } })).map((x) => x.time), [2])
+            assert.deepStrictEqual(await wo.delAll({ c: { $nin: [1, 3] } }), { n: 1, nDeleted: 1, ok: 1 })
+            assert.deepStrictEqual((await admin.query(`SELECT time FROM "${name}" ORDER BY time`)).rows.map((x) => x.time), [1, 3])
+            assert.deepStrictEqual(evs, [])
+            await admin.query(`DROP TABLE "${name}"`)
+        })
     })
 })
 
@@ -697,26 +816,62 @@ describe('write: pk strings that change on the wire are invalid pk values (W3)',
 
 
 describe('write: statements use a null-prototype extended-protocol query config (no stacked statements, no polluted pg options)', function() {
-    it('should not stack a second statement even if scalar prototypes are polluted with functions (zero bound parameters)', async function() {
+    it('should neither stack a second statement nor change the condition when Object.prototype carries 0 / NaN / substring (delAll, select, del)', async function() {
         await reset()
         let wo = mk()
-        //mongo-sql 之 parameterize 讀純量值之 value[0]、value[NaN]、value.substring: 原型被塞入函數(需程式碼執行權)時可產出無綁定參數且帶第二語句之 SQL
+        //原(mongo-sql)之 parameterize 讀純量值之 value[0]、value[NaN]、value.substring: 原型被塞入函數(需程式碼執行權)時可產出無綁定參數且帶第二語句之 SQL,
+        //當時僅靠 pgq 之 extended 協定由伺服器拒絕多語句(故斷言 reject). 換 knex 後值一律為綁定參數、不再讀這些屬性:
+        //斷言改為「條件仍為 n = 10 之綁定參數, 結果正確, 且無第二語句被執行」(pgq 之 extended 協定縱深另由下方 stub 案斷言)
         let def = (k, v) => Object.defineProperty(Object.prototype, k, { value: v, configurable: true, writable: true })
-        let r
+        let a
+        let b
+        let c
         try {
             def('0', '$')
             def('NaN', '$')
             def('substring', () => `"${CL}"."n"; CREATE TABLE vt_pwned(x int); -- ".*`)
-            r = await settle(wo.delAll({ n: 10 }))
+            a = await settle(wo.select({ n: 20 }))
+            b = await settle(wo.delAll({ n: 10 }))
+            c = await settle(wo.del({ time: 3 }))
         }
         finally {
             delete Object.prototype['0']
             delete Object.prototype.NaN
             delete Object.prototype.substring
         }
-        assert.strictEqual(r.ok, false) //伺服器拒絕 extended 協定下之多語句
+        assert.ok(a.ok, String(a.e))
+        assert.deepStrictEqual(a.v.map((x) => x.time), [2]) //條件未被改為 n = n(全部)
+        assert.deepStrictEqual(b, { ok: true, v: { n: 1, nDeleted: 1, ok: 1 } }) //只刪 n = 10 之列
+        assert.deepStrictEqual(c, { ok: true, v: [{ n: 1, nDeleted: 1, ok: 1 }] })
         assert.strictEqual((await admin.query('SELECT to_regclass(\'vt_pwned\') AS t')).rows[0].t, null) //第二語句未執行
-        assert.strictEqual((await rows()).length, 3) //資料不變
+        assert.deepStrictEqual((await rows('time')).map((x) => x.time), [2])
+    })
+
+    it('should refuse a second statement in a single query config (extended protocol), even without bound parameters', async function() {
+        //pgq 之縱深: 以本套件送出之設定物件形式(queryMode extended)直接送多語句, 由伺服器拒絕
+        await reset()
+        let seen = []
+        let orig = pg.Client.prototype.query
+        pg.Client.prototype.query = function(cfg, ...rest) {
+            if (typeof cfg !== 'string' && /^delete from/.test(cfg.text)) {
+                seen.push(cfg)
+                cfg.text = `${cfg.text.replace(/where .*$/, 'where false')}; CREATE TABLE vt_pwned(x int)` //模擬語句被置入片段
+                cfg.values = []
+            }
+            return orig.call(this, cfg, ...rest)
+        }
+        let r
+        try {
+            r = await settle(mk().delAll({ n: 10 }))
+        }
+        finally {
+            pg.Client.prototype.query = orig
+        }
+        assert.strictEqual(seen.length, 1)
+        assert.strictEqual(r.ok, false)
+        assert.ok(/cannot insert multiple commands into a prepared statement/.test(String(r.e)), String(r.e))
+        assert.strictEqual((await admin.query('SELECT to_regclass(\'vt_pwned\') AS t')).rows[0].t, null)
+        assert.strictEqual((await rows()).length, 3)
     })
 
     it('should not be affected by a polluted Object.prototype.rowMode / name of the pg query config', async function() {
@@ -841,6 +996,59 @@ describe('write: more input shapes found by review round 3 (opus)', function() {
 })
 
 
+describe('write: pk and find conditions are sent with unqualified column names and the table alias "$t" (selectByPk, save, del, delAll)', function() {
+    //欄位不加表限定("t"."c" 時 PG 會把不存在之欄以函數記法 c(t) 解析, 第 76 項), 表一律以別名 "$t" 引用; UPDATE 之欄名以 quoteKey 引用
+    it('should send the hand-written statements for selectByPk, save (pre-read, UPDATE, UPSERT), del and delAll', async function() {
+        await reset()
+        let wo = mk()
+        let seen = await capture(async () => {
+            await wo.selectByPk(2)
+            await wo.save({ time: 1, name: 'u' }, { autoInsert: false })
+            await wo.save({ time: 2, name: 'v' })
+            await wo.del({ time: 3 })
+            await wo.delAll({ name: 'zz' })
+            await wo.delAll({ n: { $gte: 10 }, $or: [{ tag: 'x' }, { tag: { $ne: 'y' } }] })
+        })
+        assert.deepStrictEqual(seen, [
+            ['select * from "twrite" as "$t" where "time" = $1', [2]],
+            ['select * from "twrite" as "$t" where "time" = $1', [1]], //save 預讀
+            ['update "twrite" set "name" = $1 where "time" = $2', ['u', 1]],
+            ['select * from "twrite" as "$t" where "time" = $1', [2]],
+            ['insert into "twrite" ("time", "name") values ($1, $2) ON CONFLICT ("time") DO UPDATE SET "name" = EXCLUDED."name" RETURNING (xmax = 0) AS inserted', [2, 'v']],
+            ['delete from "twrite" as "$t" where "time" = $1', [3]],
+            ['delete from "twrite" as "$t" where "name" = $1', ['zz']],
+            ['delete from "twrite" as "$t" where "n" >= $1 and ("tag" = $2 or "tag" != $3)', [10, 'x', 'y']], //根層 and 不加括號, or 加括號
+        ])
+        seen.forEach(([t]) => {
+            assert.ok(!t.includes('"twrite".'), t) //無表限定欄
+        })
+        //time 3 被 del; 末句 n>=10 且(tag='x' 或 tag!='y'): time 1(x)命中, time 2(y)兩支皆假而保留
+        assert.deepStrictEqual((await rows('time,name')).map((x) => [x.time, x.name]), [[2, 'v']])
+    })
+
+    it('should bind a "$x$" pk as the string parameter $1 (del, selectByPk, save pre-read), not as a column reference', async function() {
+        let CLS = 'twrite_tpk2'
+        await admin.query(`DROP TABLE IF EXISTS ${CLS}`)
+        await admin.query(`CREATE TABLE ${CLS} (time TEXT PRIMARY KEY, name TEXT)`)
+        await admin.query(`INSERT INTO ${CLS} VALUES ('$x$', 'X'), ('a', 'A')`)
+        let wo = mk({ cl: CLS })
+        let seen = await capture(async () => {
+            await wo.selectByPk('$time$')
+            await wo.save({ time: '$time$', name: 'T' }, { autoInsert: false })
+            await wo.del({ time: '$x$' })
+        })
+        assert.deepStrictEqual(seen, [
+            [`select * from "${CLS}" as "$t" where "time" = $1`, ['$time$']],
+            [`select * from "${CLS}" as "$t" where "time" = $1`, ['$time$']], //save 預讀(不存在而不 UPDATE)
+            [`delete from "${CLS}" as "$t" where "time" = $1`, ['$x$']],
+        ])
+        assert.strictEqual(typeof seen[2][1][0], 'string')
+        assert.deepStrictEqual((await admin.query(`SELECT time FROM ${CLS}`)).rows, [{ time: 'a' }]) //只刪字面主鍵 $x$ 之列
+        await admin.query(`DROP TABLE ${CLS}`)
+    })
+})
+
+
 //以下為原 T3(DDL、ON CONFLICT、RETURNING 之名稱內插)與「主鍵可來自原型」, run03 納入規則 R9、R10(規格句 W4–W8)
 
 //cleanT3, 清掉本區塊建的表(createTable 以 tt3 開頭; vo_pwned* 為堆疊語句之偵測表)
@@ -873,8 +1081,9 @@ describe('write: createTable checks and quotes every name it puts into the DDL a
         assert.strictEqual(await rel('vo_pwned'), 0) //第二語句未執行
     })
 
-    let badKeys = ['zq xw', 'zq"xw', 'zq;xw', 'zq.xw', 'zq-xw', 'zq$xw', 'zq\'xw', '1zqxw', 'zq) ; CREATE TABLE vo_pwned(a', `zq${'x'.repeat(70)}`, 'zq\u0000xw', 'zq\ud800xw', '', '__proto__', 'Infinity']
-    it('should reject data keys that are not plain identifiers (space, quote, ;, ., -, $, digit first, NUL, lone surrogate, empty, __proto__, over 63 bytes) before sending any statement (W4)', async function() {
+    //系統欄名(行為變更 3)由本套件於送出前拒收(Error, invalid createTable), 非由 PG 回報(PG 回報者為字串 reject: column name conflicts with a system column name)
+    let badKeys = ['zq xw', 'zq"xw', 'zq;xw', 'zq.xw', 'zq-xw', 'zq$xw', 'zq\'xw', '1zqxw', 'zq) ; CREATE TABLE vo_pwned(a', `zq${'x'.repeat(70)}`, 'zq\u0000xw', 'zq\ud800xw', '', '__proto__', 'ctid', 'tableoid', 'xmin', 'xmax', 'cmin', 'cmax']
+    it('should reject data keys that are not plain identifiers (space, quote, ;, ., -, $, digit first, NUL, lone surrogate, empty, __proto__, over 63 bytes, system column names) before sending any statement (W4)', async function() {
         let evs = []
         let wo = mk()
         wo.on('error', (m) => evs.push(m))
@@ -895,7 +1104,7 @@ describe('write: createTable checks and quotes every name it puts into the DDL a
 
     it('should reject a pk name that is not a plain identifier, whether or not the sample has such a key (W4)', async function() {
         let wo = mk()
-        for (let pk of ['time; drop table tt3_victim', 'a"b', 'a b', 'x.y', '1abc', 'p'.repeat(64), 'Infinity']) {
+        for (let pk of ['time; drop table tt3_victim', 'a"b', 'a b', 'x.y', '1abc', 'p'.repeat(64), 'xmin', 'ctid']) {
             let sample = { time: 1 }
             sample[pk] = 'x'
             let r1 = await settle(wo.createTable('tt3_pk', pk, { time: 1 }))
@@ -944,9 +1153,34 @@ describe('write: createTable checks and quotes every name it puts into the DDL a
             assert.deepStrictEqual((await w.select({ time: 1 })).map((x) => x.time), [1], cl)
             assert.strictEqual((await w.del({ time: 1 }))[0].nDeleted, 1, cl)
         }
-        //完整雙引號名稱: createTable 與 insert 可用; 其餘函數無法以它當 opt.cl(mongo-sql 以 quoteObject(欄, 表) 限定欄名, 表名帶引號時產出語法錯誤; HEAD 同, 見帳本 R9)
-        assert.strictEqual((await mk({ cl: '"Tt3_Q"' }).insert({ time: 1 })).nInserted, 1)
+        //完整雙引號名稱: 行為變更 6 起所有函數皆可用(欄名不加表限定, 原 mongo-sql 之 ""Tt3_Q""."time" 語法錯誤不再發生)
+        let wq = mk({ cl: '"Tt3_Q"' })
+        assert.strictEqual((await wq.insert({ time: 1 })).nInserted, 1)
+        assert.strictEqual((await wq.save({ time: 2 }))[0].nInserted, 1)
+        assert.strictEqual((await wq.selectByPk(1)).time, 1)
+        assert.deepStrictEqual((await wq.select({ time: { $gte: 1 } })).map((x) => x.time), [1, 2])
+        assert.strictEqual((await wq.del({ time: 1 }))[0].nDeleted, 1)
         assert.strictEqual((await admin.query('SELECT count(*)::int AS n FROM "Tt3_Q"')).rows[0].n, 1)
+        assert.strictEqual((await wq.delAll({})).nDeleted, 1)
+        assert.strictEqual((await admin.query('SELECT count(*)::int AS n FROM "Tt3_Q"')).rows[0].n, 0)
+    })
+
+    it('should create and use a column and a pk named Infinity (behavior change 2: Infinity is an ordinary identifier)', async function() {
+        //原限制源自 mongo-sql 以 +key>=0 判陣列索引; 換 knex 後 Infinity 為一般識別字
+        assert.deepStrictEqual(await mk().createTable('tt3_inf', 'Infinity', { Infinity: 1, v: 'x' }), { ok: 1 })
+        assert.deepStrictEqual(await colsOf('tt3_inf'), ['Infinity', 'v'])
+        let wo = mk({ cl: 'tt3_inf', pk: 'Infinity' })
+        assert.strictEqual((await wo.insert([{ Infinity: 1, v: 'a' }, { Infinity: 2, v: 'b' }])).nInserted, 2)
+        assert.deepStrictEqual(await wo.save({ Infinity: 1, v: 'a2' }, { autoInsert: false }), [{ n: 1, nInserted: 0, nModified: 1, ok: 1 }])
+        assert.deepStrictEqual(await wo.selectByPk(1), { Infinity: 1, v: 'a2' })
+        assert.deepStrictEqual((await wo.select({ Infinity: { $gt: 1 } })).map((x) => x.v), ['b'])
+        assert.deepStrictEqual(await wo.del({ Infinity: 2 }), [{ n: 1, nDeleted: 1, ok: 1 }])
+        assert.deepStrictEqual((await admin.query('SELECT "Infinity", v FROM tt3_inf')).rows, [{ Infinity: 1, v: 'a2' }])
+        //資料鍵 Infinity 於其他表為合法鍵(通過檢核), 欄是否存在由 PG 回報(逐筆 ok:0, 非整批之 invalid data)
+        await reset()
+        let r = await mk().save({ time: 1, Infinity: 5 }, { autoInsert: false })
+        assert.strictEqual(r[0].ok, 0)
+        assert.ok(/does not exist/.test(r[0].err), r[0].err)
     })
 
     it('should reject a sample object that has only inherited enumerable keys (it would create a table without columns)', async function() {
@@ -1134,10 +1368,18 @@ describe('write: save (autoInsert) ON CONFLICT ... DO UPDATE SET quotes the colu
 
 
 describe('write: opt.pk must be an identifier at construction and is quoted wherever it is put into SQL (R9, W6)', function() {
-    let bads = ['a"b', 'time; drop table x', 'a b', 'x.y', '1abc', '$x', 'a-b', '__proto__', 'Infinity', 'p'.repeat(64), 'p\u0000q', 'a\nb', 'a,b']
+    let bads = ['a"b', 'time; drop table x', 'a b', 'x.y', '1abc', '$x', 'a-b', '__proto__', 'p'.repeat(64), 'p\u0000q', 'a\nb', 'a,b']
     bads.forEach((k) => {
         it(`should throw invalid opt.pk at construction for ${JSON.stringify(k.length > 20 ? k.slice(0, 20) + '...' : k)} without echoing it`, function() {
-            assert.throws(() => mk({ pk: k }), (e) => e instanceof Error && /^invalid opt\.pk/.test(e.message) && !e.message.includes(k))
+            assert.throws(() => mk({ pk: k }), (e) => e instanceof Error && /^invalid opt\.pk: must be a plain identifier/.test(e.message) && !e.message.includes(k))
+        })
+    })
+
+    //行為變更 3: 系統欄名作為 opt.pk 於建構時拋出專屬訊息(未限定引用時會解析為系統欄)
+    let sysCols = ['ctid', 'tableoid', 'xmin', 'xmax', 'cmin', 'cmax']
+    sysCols.forEach((k) => {
+        it(`should throw "invalid opt.pk: system column names ... are not supported" at construction for ${k}`, function() {
+            assert.throws(() => mk({ pk: k }), (e) => e instanceof Error && e.message === 'invalid opt.pk: system column names (ctid, tableoid, xmin, xmax, cmin, cmax) are not supported')
         })
     })
 
@@ -1149,8 +1391,8 @@ describe('write: opt.pk must be an identifier at construction and is quoted wher
         }
     })
 
-    it('should accept identifiers with capitals, underscores, digits and non-ASCII letters', function() {
-        for (let k of ['Id', 'ID_1', '_x', '主鍵', 'p'.repeat(63)]) {
+    it('should accept identifiers with capitals, underscores, digits and non-ASCII letters, and Infinity and oid (behavior changes 2, 3)', function() {
+        for (let k of ['Id', 'ID_1', '_x', '主鍵', 'p'.repeat(63), 'Infinity', 'oid', 'XMIN']) {
             assert.doesNotThrow(() => mk({ pk: k }), k)
         }
     })

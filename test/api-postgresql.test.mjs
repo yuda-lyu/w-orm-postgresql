@@ -1949,6 +1949,45 @@ describe('insert returnList', function() {
             { code: '2025-01-01', name: 'd', value: 2 },
         ], { returnList: true })).map((v) => v.nInserted)
 
+        //INTEGER主鍵而輸入為字串('01'、'+2'、' 3 ')者, PG轉換後寫入, 回傳列為number, 輸入側須同樣轉換才比得上(外審 sol F06)
+        let clI = 'retlistint'
+        let woI = WOrm({
+            ...genOpt(clI),
+            pk: 'id',
+        })
+        await woI.createTable(clI, null, {
+            id: 1,
+            name: 'abc',
+        }).catch(() => {})
+        await woI.delAll()
+        await woI.insert({ id: 2, name: 'exist' })
+        let liI = await woI.insert([
+            { id: '01', name: 'a' },
+            { id: '+2', name: 'b' }, //已存在(2)
+            { id: ' 3 ', name: 'c' },
+            { id: 3, name: 'dup' }, //同批重複(3)
+            { id: 4, name: 'd' },
+        ], { returnList: true })
+        vget[15] = liI.map((v) => v.nInserted)
+        vget[16] = (await woI.select({}, { id: 'asc' })).map((v) => v.id)
+
+        //BOOLEAN主鍵而輸入為字串('t'、'0')者, 同上
+        let clB = 'retlistbool'
+        let woB = WOrm({
+            ...genOpt(clB),
+            pk: 'flag',
+        })
+        await woB.createTable(clB, null, {
+            flag: true,
+            name: 'abc',
+        }).catch(() => {})
+        await woB.delAll()
+        vget[17] = (await woB.insert([
+            { flag: 't', name: 'a' },
+            { flag: '0', name: 'b' },
+            { flag: 'yes', name: 'dup of true' }, //同批重複(true)
+        ], { returnList: true })).map((v) => v.nInserted)
+
     })
 
     vans[1] = [
@@ -2025,6 +2064,21 @@ describe('insert returnList', function() {
     vans[14] = [0, 1]
     it(`should get ${JSON.stringify(vans[14])} for insert with returnList by text pk looking like date`, async function() {
         assert.strict.deepStrictEqual(vget[14], vans[14])
+    })
+
+    vans[15] = [1, 0, 1, 0, 1]
+    it(`should get ${JSON.stringify(vans[15])} for insert with returnList by INTEGER pk given as strings ('01', '+2', ' 3 ')`, async function() {
+        assert.strict.deepStrictEqual(vget[15], vans[15])
+    })
+
+    vans[16] = [1, 2, 3, 4]
+    it(`should get ${JSON.stringify(vans[16])} for the rows really inserted by INTEGER pk given as strings`, async function() {
+        assert.strict.deepStrictEqual(vget[16], vans[16])
+    })
+
+    vans[17] = [1, 1, 0]
+    it(`should get ${JSON.stringify(vans[17])} for insert with returnList by BOOLEAN pk given as strings ('t', '0', 'yes')`, async function() {
+        assert.strict.deepStrictEqual(vget[17], vans[17])
     })
 
 })

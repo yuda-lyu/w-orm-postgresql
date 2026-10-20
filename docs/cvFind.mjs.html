@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dateTimeOf">dateTimeOf</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isBufferValue">isBufferValue</a></li><li><a href="global.html#isCleanStr">isCleanStr</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isDateValue">isDateValue</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
     
 </nav>
 
@@ -45,54 +45,25 @@
     
     <section>
         <article>
-            <pre class="prettyprint source linenums"><code>//條件(find)與排序(order)於交給mongo-sql之前的白名單檢核與正規化
-//
-//背景: mongo-sql為SQL builder, 對不認得或怪異之輸入以[丟棄]或[當欄名]處理, 且有原始SQL($custom)、子查詢、
-//欄引用($x$)等擴充功能, 套件若直接把呼叫端之find與order交給它, 會令條件靜默縮小(delAll擴大刪除)、語意被曲解或SQL被注入.
-//規則見CLAUDE_rulebook.md〈條件(find)之支援範圍〉與R1~R3、R11:
-// 1. find之形狀檢核(型別、運算子集合、空集合、欄名文法、異常結構、上限)為系列共用規則, 單一擁有者為wsemi之cvOrmFind,
-//    cvFind第一步即呼叫之, 取得全新之null原型深複本(檢查之值即使用之值), 之後只走訪該複本, 不再讀呼叫端之原物件
-// 2. 第二階段僅做mongo-sql/PostgreSQL專屬之限制與轉譯(欄名63 bytes與Infinity、$nin表名守門、$eq轉$equals、布林$ne轉SQL三值、
-//    首尾$字串改以$in/$nin字面值送出、綁定參數上限、$and/$or轉null原型索引物件), 不重寫形狀規則
-// 3. fail-closed: 不在白名單內者一律throw Error('invalid find: &lt;原因> at [&lt;路徑>]'), 不靜默忽略, 不擴充支援範圍
-// 4. 通過檢核且無轉譯者, 交mongo-sql之query與values與原find逐字相同
-//order之檢核(cvOrder)仍由本模組自行實作(order不屬系列find白名單)
-
-
+            <pre class="prettyprint source linenums"><code>//條件(find)與排序(order)於送出前的白名單檢核與正規化
+//  find : cvOrmFind(wsemi, 形狀檢核唯一擁有者, 回傳全新null原型複本) -> lowerFind(方言中立IR, 見lowerFind.mjs) ; pg專屬限制(欄名63 bytes、系統欄、綁定參數上限)由dialectPg注入
+//  order: 本模組自行檢核(order不屬系列find白名單, 但鍵與find同文法: 僅識別字), 輸出為有序陣列[{c, dir, nulls}]
 import cvOrmFind from 'wsemi/src/cvOrmFind.mjs'
+import { lowerFind } from './lowerFind.mjs'
+import { dialectPg } from './buildSql.mjs'
 
 
-let MAX_PARAMS = 65535 //單一語句綁定參數上限(PostgreSQL協定以int16記個數)
 let MAX_KEY = 200 //欄名鍵字元數上限(僅為防禦, 識別字另有63 bytes上限)
 
-//欄名文法: 字母或底線開頭, 其後字母/數字/底線(可含Unicode字母, PostgreSQL允許非ASCII識別字).
-//不含$ " . 空白 * ; 等, 令: $x$欄引用、$開頭之運算子鍵、mongo-sql之JSON/轉型/表.欄解析、
-//$nin之RegExp改寫(欄名含$時失配而靜默成$in)皆無從誤判
 let reIdent = /^[\p{L}_][\p{L}\p{M}\p{N}_]*$/u
 
-//JSON取值鍵(僅供cvOrder: find已不支援, order沿用): 欄(->|->>|#>|#>>)片段...
-//片段僅限[識別字樣式]或[無前導零之整數]: mongo-sql以parseInt是否為NaN決定片段是否加引號,
-//數字開頭但非純數字者(1abc)會被原樣輸出; 前導零者(007)被PostgreSQL當整數7而非鍵"007"
-let reJsonPath = /^[\p{L}_][\p{L}\p{M}\p{N}_]*(?:(?:->>|->|#>>|#>)(?:[\p{L}_][\p{L}\p{M}\p{N}_]*|0|[1-9][0-9]*))+$/u
-
-//轉型鍵(僅供cvOrder): 欄::型別. mongo-sql把::型別黏在JSON路徑最後一個片段上, 與PostgreSQL之運算子優先序不符, 故JSON路徑不接轉型
-let reCast = /::[A-Za-z_][A-Za-z0-9_]*$/
-
-//孤立代理字元(UTF-8編碼時會變為U+FFFD, 令送出之值與呼叫端給的不同)
 let reLone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?&lt;![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
-/**
- * 字串是否不含NUL與孤立代理字元(兩者經UTF-8送出時被伺服器拒絕或被改為U+FFFD, 令送出之值與呼叫端給的不同)
- *
- * @param {String} s 輸入字串
- * @returns {Boolean} 回傳布林
- */
 export let isCleanStr = (s) => (typeof s.isWellFormed === 'function' ? s.isWellFormed() : !reLone.test(s)) &amp;&amp; !s.includes('\u0000')
 
 let isObjLike = (v) => v !== null &amp;&amp; typeof v === 'object'
 let tag = (v) => Object.prototype.toString.call(v)
 
-//以內部槽判定Date與Buffer(不受Symbol.toStringTag、instanceof、原型偽造影響), 且不經可被覆寫之實例方法
 let dateGetTime = Date.prototype.getTime
 let u8Tag = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get
 
@@ -108,36 +79,10 @@ let getTime = (v) => {
     }
 }
 
-/**
- * 是否為Date物件(含無效Date)
- *
- * @param {*} v 輸入值
- * @returns {Boolean} 回傳布林
- */
 export let isDateValue = (v) => getTime(v) !== undefined
-
-/**
- * 以內部槽取Date之時間值(毫秒), 非Date回傳undefined; 無效Date回傳NaN
- *
- * @param {*} v 輸入值
- * @returns {Number|undefined} 回傳時間值
- */
 export let dateTimeOf = (v) => getTime(v)
-
-/**
- * 是否為Buffer
- *
- * @param {*} v 輸入值
- * @returns {Boolean} 回傳布林
- */
 export let isBufferValue = (v) => isObjLike(v) &amp;&amp; typeof Buffer !== 'undefined' &amp;&amp; Buffer.isBuffer(v) &amp;&amp; u8Tag.call(v) === 'Uint8Array'
 
-/**
- * 是否為一般物件(原型為Object.prototype或null)
- *
- * @param {*} v 輸入值
- * @returns {Boolean} 回傳布林
- */
 export let isPlainObject = (v) => {
     if (!isObjLike(v) || Array.isArray(v)) {
         return false
@@ -149,10 +94,6 @@ export let isPlainObject = (v) => {
     return p === Object.prototype || p === null
 }
 
-//mongo-sql之parameterize將首尾皆為$之字串(含單一$)視為欄引用
-let isColRef = (s) => s.length > 0 &amp;&amp; s[0] === '$' &amp;&amp; s[s.length - 1] === '$'
-
-//msgOf, 取例外之訊息字串; 呼叫端鉤子拋出之物件可能令讀取message或轉字串本身再拋錯, 一律收斂
 let msgOf = (err) => {
     try {
         return err &amp;&amp; err.message !== undefined ? String(err.message) : String(err)
@@ -162,14 +103,12 @@ let msgOf = (err) => {
     }
 }
 
-//clean, 清除控制字元並限長, 供訊息使用
 let clean = (s, n) => {
     // eslint-disable-next-line no-control-regex
     let t = String(s).replace(/[\u0000-\u001f\u007f]/g, '?')
     return t.length > n ? `${t.slice(0, n)}...` : t
 }
 
-//ours, 本模組fail()所建之Error(模組私有): 其餘例外(含cvOrmFind所拋者)一律包成新Error, reject值恆為本模組建立之Error
 let ours = new WeakSet()
 
 let fail = (msg, path) => {
@@ -180,27 +119,23 @@ let fail = (msg, path) => {
     throw e
 }
 
-//輸出物件一律為null原型, 令mongo-sql之for..in不會看到Object.prototype上之可列舉屬性
 let newObj = () => Object.create(null)
+let put = (arr, v) => {
+    Object.defineProperty(arr, arr.length, { __proto__: null, value: v, enumerable: true, writable: true, configurable: true })
+}
 let setOwn = (o, k, v) => {
-    //描述子為null原型: 一般物件字面量會繼承被汙染之Object.prototype.get/set, 令defineProperty拋Getter must be a function
     Object.defineProperty(o, k, { __proto__: null, value: v, enumerable: true, writable: true, configurable: true })
 }
 
-//chkIdent, 識別字型欄名(供資料鍵與order共用)
 let chkIdent = (k) => {
     if (typeof k !== 'string' || k === '__proto__' || k.length > MAX_KEY || !reIdent.test(k)) {
         return `unsupported column name [${clean(k, 60)}]`
     }
-    if (Buffer.byteLength(k, 'utf8') > 63) {
-        //PostgreSQL識別字上限63 bytes, 超過者被伺服器靜默截斷而可能指到他欄
-        return 'column name is too long (> 63 bytes)'
-    }
-    return ''
+    return dialectPg.checkColumn(k)
 }
 
 /**
- * 檢核單一欄名為識別字(寫入路徑之資料鍵使用, 不接受JSON取值鍵與轉型鍵)
+ * 檢核單一欄名為識別字(寫入路徑之資料鍵使用; 含63 bytes與系統欄檢核, 與find同)
  *
  * @param {String} k 輸入欄名
  * @throws {Error} 不合文法時拋出Error('unsupported column name [k]')
@@ -212,7 +147,7 @@ export function cvColumn(k) {
     }
 }
 
-//chkKey, order之欄名鍵: 識別字、JSON取值鍵、末尾單一轉型(find已不支援後兩者, order沿用, 見帳本已知限制)
+//chkKey, order之欄名鍵: 僅識別字(與find同文法: 含63 bytes與系統欄檢核); JSON取值鍵(->、->>、#>、#>>)與::轉型鍵不接受; 回傳欄名
 let chkKey = (k, path) => {
     if (typeof k !== 'string') {
         fail('symbol key is not allowed', path)
@@ -223,30 +158,13 @@ let chkKey = (k, path) => {
     if (k.length > MAX_KEY) {
         fail('column name is too long', path)
     }
-    if (+k >= 0) {
-        //mongo-sql以+key>=0判定為陣列索引(如Infinity), 欄名會被丟失而產生字面undefined
-        fail(`unsupported column name [${clean(k, 30)}]`, path)
-    }
-    let base = k.replace(reCast, '')
-    let hasCast = base !== k
-    let colPart = base.split(/->|#>/)[0]
-    let m = chkIdent(colPart)
+    let m = chkIdent(k)
     if (m) {
         fail(m, path)
     }
-    if (reIdent.test(base)) {
-        return
-    }
-    if (reJsonPath.test(base)) {
-        if (hasCast) {
-            fail('cast on JSON path is not supported', path)
-        }
-        return
-    }
-    fail(`unsupported column name [${clean(k, 60)}]`, path)
+    return k
 }
 
-//readOwn, 逐鍵僅讀值一次; 拒絕Symbol鍵、不可列舉、存取器
 let readOwn = (obj, path) => {
     let out = []
     let keys
@@ -270,207 +188,25 @@ let readOwn = (obj, path) => {
         if (!d || !d.enumerable) {
             fail(`non-enumerable property [${clean(k, 30)}] is not allowed`, path)
         }
-        if (!Object.prototype.hasOwnProperty.call(d, 'value')) { //不用 'value' in d, 以免受Object.prototype.value汙染
+        if (!Object.prototype.hasOwnProperty.call(d, 'value')) {
             fail(`accessor property [${clean(k, 30)}] is not allowed`, path)
         }
-        out.push([k, d.value])
-    }
-    return out
-}
-
-//以下為find之pg專屬第二階段. 輸入為cvOrmFind之複本: 皆為全新, 條件物件為null原型且僅含自有可列舉資料屬性,
-//純量為字串/有限數值/布林/有效Date/null, 運算子僅限$eq $ne $gt $gte $lt $lte $in $nin, 清單與集合為密集真陣列,
-//故此處不再驗證形狀, 只做mongo-sql/PostgreSQL專屬之限制與轉譯. 陣列一律以length與索引走訪(不呼叫Array.prototype方法, 免受其汙染影響)
-
-//spendParam, 計入一個綁定參數
-let spendParam = (st, path) => {
-    st.params += 1
-    if (st.params > MAX_PARAMS) {
-        fail(`too many bound parameters (> ${MAX_PARAMS})`, path)
-    }
-}
-
-//spendVal, 純量值若會成為綁定參數才計入: mongo-sql對布林內嵌true/false、對null輸出is null/is not null,皆不佔參數;
-//字串、數值、Date一個值一個參數($in/$nin之元素一律為參數, 含布林, 由cpSet逐元素計入)
-let spendVal = (st, v, path) => {
-    if (v !== null &amp;&amp; typeof v !== 'boolean') {
-        spendParam(st, path)
-    }
-}
-
-//chkName, 欄名鍵之pg專屬限制(識別字文法與長度上限由cvOrmFind檢核)
-let chkName = (k, path) => {
-    if (Buffer.byteLength(k, 'utf8') > 63) {
-        //PostgreSQL識別字上限63 bytes, 超過者被伺服器靜默截斷而可能指到他欄
-        fail('column name is too long (> 63 bytes)', path)
-    }
-    if (+k >= 0) {
-        //mongo-sql以+key>=0判定為陣列索引(如Infinity), 欄名會被丟失而產生字面undefined
-        fail(`unsupported column name [${clean(k, 30)}]`, path)
-    }
-}
-
-//strRef, 值是否為首尾皆$之字串(mongo-sql視為欄引用)
-let strRef = (v) => typeof v === 'string' &amp;&amp; isColRef(v)
-
-//failRef, 首尾皆$之字串不得用於比較運算子(mongo-sql無逸出方式; 等值、$eq、$ne、$in、$nin可改以字面值送出)
-let failRef = (path) => fail('string begins and ends with "$" (reserved by mongo-sql as column reference) is only supported by equality, $eq, $ne, $in and $nin', path)
-
-//failNin, 表名令mongo-sql之$nin改寫失配者, $nin會靜默變成$in, 一律拒收
-let failNin = (path) => fail('$nin is not supported with this table name (it contains characters that break the $nin rewrite of mongo-sql)', path)
-
-//cpSet, 複製$in/$nin之集合(元素皆為非null純量), 逐元素計入綁定參數.
-//元素一律以setOwn(defineProperty)定義為自有屬性, 不用索引指派(索引指派會呼叫Array.prototype上之數字索引setter, 令元素被吞掉)
-let cpSet = (arr, path, st) => {
-    let n = arr.length
-    let out = []
-    for (let i = 0; i &lt; n; i++) {
-        spendParam(st, `${path}[${i}]`)
-        setOwn(out, i, arr[i])
-    }
-    return out
-}
-
-//newEx, 無法就地轉譯之條件的收集器: 以null原型物件承載索引(不用陣列, 免受Array.prototype索引setter影響), n為筆數
-let newEx = () => ({ list: newObj(), n: 0 })
-
-//emit, 寫入運算子; 同名已存在(如$eq與布林$ne皆轉為$equals)者另存為獨立條件, 由呼叫端併入文件之$and, 不得靜默覆蓋
-let emit = (ops, ex, k, op, val) => {
-    if (Object.prototype.hasOwnProperty.call(ops, op)) {
-        let c = newObj()
-        let o = newObj()
-        setOwn(o, op, val)
-        setOwn(c, k, o)
-        setOwn(ex.list, String(ex.n), c)
-        ex.n += 1
-        return
-    }
-    setOwn(ops, op, val)
-}
-
-//cvOps, 欄位運算子物件(複本)轉為mongo-sql可用者; 回傳null原型運算子物件
-let cvOps = (k, obj, extras, path, st) => {
-    let ops = newObj()
-    let ks = Object.keys(obj)
-    for (let i = 0; i &lt; ks.length; i++) {
-        let op = ks[i]
-        let v = obj[op]
-        let p = `${path}.${clean(op, 30)}`
-        if (op === '$eq') {
-            spendVal(st, v, p)
-            if (strRef(v)) {
-                emit(ops, extras, k, '$in', [v])
-            }
-            else {
-                emit(ops, extras, k, '$equals', v)
-            }
-        }
-        else if (op === '$ne') {
-            spendVal(st, v, p)
-            if (typeof v === 'boolean') {
-                //mongo-sql對布林$ne輸出IS NOT TRUE/IS NOT FALSE(含NULL列), 與其他型別之!=(不含NULL列)不一致; 改為SQL三值
-                emit(ops, extras, k, '$equals', !v)
-            }
-            else if (strRef(v)) {
-                if (!st.nin) {
-                    failNin(p)
-                }
-                emit(ops, extras, k, '$nin', [v])
-            }
-            else {
-                emit(ops, extras, k, '$ne', v)
-            }
-        }
-        else if (op === '$gt' || op === '$gte' || op === '$lt' || op === '$lte') {
-            spendVal(st, v, p)
-            if (strRef(v)) {
-                failRef(p)
-            }
-            emit(ops, extras, k, op, v)
-        }
-        else if (op === '$in' || op === '$nin') {
-            if (op === '$nin' &amp;&amp; !st.nin) {
-                failNin(p)
-            }
-            //元素由mongo-sql直接以綁定參數送出(不經parameterize), 故首尾$字串於此為字面值
-            emit(ops, extras, k, op, cpSet(v, p, st))
-        }
-        else {
-            //cvOrmFind已拒收其餘運算子, 此為縱深防禦
-            fail(`unsupported operator [${clean(op, 30)}]`, p)
-        }
-    }
-    return ops
-}
-
-//cvDoc, 條件物件(複本)轉為mongo-sql可用者; 回傳null原型物件, $and/$or之清單為null原型之{0:..,1:..}
-//(mongo-sql僅以for..in走訪且索引鍵升冪, 輸出之SQL與陣列相同, 且免疫Array.prototype汙染)
-let cvDoc = (doc, path, st) => {
-    let out = newObj()
-    let extras = newEx()
-    let nAnd = 0 //本文件自帶之$and清單筆數(併入無法就地轉譯之條件時接在其後)
-    let ks = Object.keys(doc)
-    for (let i = 0; i &lt; ks.length; i++) {
-        let k = ks[i]
-        let v = doc[k]
-        let p = `${path}.${clean(k, 30)}`
-        if (k === '$and' || k === '$or') {
-            //清單直接建為null原型之{0:..,1:..}, 不經陣列(索引指派會呼叫Array.prototype上之數字索引setter, 令元素被吞掉而條件變寬)
-            let lst = newObj()
-            let n = v.length
-            for (let j = 0; j &lt; n; j++) {
-                setOwn(lst, String(j), cvDoc(v[j], `${p}[${j}]`, st))
-            }
-            setOwn(out, k, lst)
-            if (k === '$and') {
-                nAnd = n
-            }
-            continue
-        }
-        chkName(k, p)
-        if (isObjLike(v) &amp;&amp; !isDateValue(v)) {
-            setOwn(out, k, cvOps(k, v, extras, p, st))
-        }
-        else if (strRef(v)) {
-            //等值之首尾$字串: 計數由$eq分支負責(只計一次)
-            setOwn(out, k, cvOps(k, { $eq: v }, extras, p, st))
-        }
-        else {
-            spendVal(st, v, p)
-            setOwn(out, k, v)
-        }
-    }
-    if (extras.n > 0) {
-        //無法就地轉譯之條件, 與本文件其餘條件為AND, 接在本文件之$and清單後(無則新建)
-        let and = nAnd > 0 ? out.$and : newObj()
-        for (let j = 0; j &lt; extras.n; j++) {
-            setOwn(and, String(nAnd + j), extras.list[String(j)])
-        }
-        setOwn(out, '$and', and)
+        put(out, [k, d.value])
     }
     return out
 }
 
 /**
- * 檢核並正規化find
- *
- * 第一步由wsemi之cvOrmFind依系列條件白名單檢核並取得全新之null原型複本(undefined與{}為未給條件，即全部；
- * 傳了值卻不是條件物件者一律reject，不得視同{}而全刪)，之後只走訪該複本做pg專屬限制與轉譯。
- *
- * 驗證過程中任何例外(含呼叫端物件之getter、Proxy trap、Symbol.toStringTag拋錯)一律轉為invalid find.
- * 可重入(呼叫端之trap再呼叫本函數亦不致影響外層).
+ * 檢核並正規化find, 回傳方言中立IR(見lowerFind); 無條件回傳null
  *
  * @param {*} find 輸入條件
- * @param {Object} [opt={}] 輸入設定物件
- * @param {Boolean} [opt.nin=true] 輸入是否允許$nin, 預設true; 表名令mongo-sql之$nin改寫失配者須給false
- * @returns {Object} 回傳全新之正規化find(null原型), 可交mongo-sql
+ * @returns {Object|null} 回傳IR
  * @throws {Error} 不支援或無法轉譯者拋出Error('invalid find: &lt;原因> at [&lt;路徑>]')
  */
-export function cvFind(find, opt = {}) {
+export function cvFind(find) {
     try {
-        let st = { params: 0, nin: !opt || opt.nin !== false }
         let copy = cvOrmFind(find)
-        return cvDoc(copy, 'find', st)
+        return lowerFind(copy, { maxParams: dialectPg.maxParams, checkColumn: dialectPg.checkColumn })
     }
     catch (err) {
         if (ours.has(err)) {
@@ -478,7 +214,6 @@ export function cvFind(find, opt = {}) {
         }
         let m = msgOf(err)
         if (/^invalid find: /.test(m)) {
-            //cvOrmFind所拋(訊息為固定詞彙與路徑, 不回顯值), 保留其訊息但包成本模組建立之新Error
             throw new Error(clean(m, 500))
         }
         throw new Error(`invalid find: ${clean(m, 200)} at [find]`)
@@ -486,30 +221,33 @@ export function cvFind(find, opt = {}) {
 }
 
 /**
- * 檢核並正規化order
- *
- * 僅接受undefined、null、{}或一般物件, 鍵依欄名文法, 值為asc|desc(不分大小寫, 可接nulls first|last).
+ * 檢核並正規化order, 回傳有序陣列[{c, dir, nulls}]
  *
  * @param {*} order 輸入排序
- * @returns {Object} 回傳全新之order物件(null原型)
+ * @returns {Array} 回傳排序項陣列(空陣列為不排序)
  * @throws {Error} 不支援者拋出Error('invalid order: &lt;原因> at [&lt;路徑>]')
  */
 export function cvOrder(order) {
     if (order === undefined || order === null) {
-        return newObj()
+        return []
     }
     try {
         if (!isPlainObject(order)) {
             fail('order must be a plain object', 'order')
         }
-        let out = newObj()
+        let out = []
         for (let [k, v] of readOwn(order, 'order')) {
             let p = `order.${clean(k, 30)}`
-            chkKey(k, p)
-            if (typeof v !== 'string' || !/^(asc|desc)(\s+nulls\s+(first|last))?$/i.test(v)) {
+            let key = chkKey(k, p)
+            let m = typeof v === 'string' ? /^(asc|desc)(?:\s+nulls\s+(first|last))?$/i.exec(v) : null
+            if (m === null) {
                 fail('direction must be asc or desc (optionally followed by nulls first|last)', p)
             }
-            setOwn(out, k, v)
+            let o = newObj()
+            setOwn(o, 'c', key)
+            setOwn(o, 'dir', m[1].toLowerCase())
+            setOwn(o, 'nulls', m[2] ? m[2].toLowerCase() : null)
+            put(out, o)
         }
         return out
     }
@@ -524,18 +262,21 @@ export function cvOrder(order) {
 /**
  * 以正規化find與order產生快取鍵(區分Date、bigint、Buffer與字串, 以免JSON.stringify混同)
  *
- * @param {Object} find 已正規化之find, 或形如{[pk]: 主鍵值}之簡單條件
- * @param {Object} order 已正規化之order
+ * @param {Object|null} find 已正規化之find(IR)
+ * @param {Array} order 已正規化之order
  * @returns {String} 回傳快取鍵
  */
 export function cvKey(find, order) {
     let rep = function(k, v) {
+        if (k === 'p' &amp;&amp; typeof this.t === 'string') {
+            return undefined //IR葉節點之來源路徑p僅供診斷, 不參與語意(如{a:1}與{$and:[{a:1}]}、selectByPk與select共用快取)
+        }
         let raw = this[k]
         if (typeof raw === 'bigint') {
             return { $bigint: String(raw) }
         }
         if (typeof raw === 'number' &amp;&amp; !Number.isFinite(raw)) {
-            return { $num: String(raw) } //NaN、Infinity於JSON.stringify皆為null, 會與null混同
+            return { $num: String(raw) }
         }
         let ms = getTime(raw)
         if (ms !== undefined) {
@@ -562,7 +303,7 @@ export function cvKey(find, order) {
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 02:01:06 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

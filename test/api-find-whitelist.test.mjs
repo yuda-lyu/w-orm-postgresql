@@ -3,6 +3,8 @@ import assert from 'assert'
 import pg from 'pg'
 import cvCases from 'wsemi/src/_cvOrmFindCases.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
+import { cvFind } from '../src/cvFind.mjs'
+import { buildDelete } from '../src/buildSql.mjs'
 import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 
 
@@ -35,10 +37,10 @@ let mk = () => WOrm({ url: ct.url, db: ct.db, cl: CL, pk: 'id' })
 let ids = (rows) => rows.map((x) => x.id).sort()
 let ALL = cvCases.seed().map((r) => r.id)
 
-//schema 案中由 pg 專屬第二階段(而非 PG)reject 者: 欄名超過 PostgreSQL 識別字上限 63 bytes、Infinity(mongo-sql 視為陣列索引)
+//schema 案中由 pg 專屬第二階段(而非 PG)reject 者: 欄名超過 PostgreSQL 識別字上限 63 bytes.
+//F26(Infinity)原亦屬此(mongo-sql 視為陣列索引), SQL 改由 knex 產生後為合法欄名(行為變更 2), 由 PG 回報欄不存在, 不再列於此
 let PG_ONLY = {
     F21: /column name is too long \(> 63 bytes\)/,
-    F26: /unsupported column name \[Infinity\]/,
 }
 
 
@@ -122,7 +124,7 @@ describe('whitelist: every case of the shared table through the public select an
                 //只有標 schema 之案可因欄位不存在或型別不符(PG 或 pg 專屬限制)而 reject
                 assert.ok(c.schema === true, `only schema cases may reject, but ${c.id} rejected with: ${rs.e && rs.e.message}`)
                 assert.ok(rs.e instanceof Error || typeof rs.e === 'string')
-                //拒收原因須為 PG 端之錯誤(欄不存在、型別不符), 或 pg 專屬第二階段之指定限制(F21 欄名 >63 bytes、F26 Infinity); 不得是本套件對白名單內欄名之誤拒
+                //拒收原因須為 PG 端之錯誤(欄不存在、型別不符), 或 pg 專屬第二階段之指定限制(F21 欄名 >63 bytes); 不得是本套件對白名單內欄名之誤拒
                 let m = String((rs.e && rs.e.message) || rs.e)
                 if (/^invalid find: /.test(m)) {
                     assert.ok(PG_ONLY[c.id] && PG_ONLY[c.id].test(m), `${c.id} rejected by the validator with an unexpected reason: ${m}`)
@@ -141,7 +143,7 @@ describe('whitelist: every case of the shared table through the public select an
 
 describe('whitelist: column names that the shared grammar allows and the series table marks as schema cases work when the column exists (positive path)', function() {
     //案例表之 schema 案在 twl 表上必因欄不存在而被 PG 拒收, 正向路徑(合法欄名被本套件接受並正確命中)另以含這些欄之表驗證.
-    //F21(128 字元欄名)超過 PostgreSQL 識別字上限 63 bytes、F26(Infinity)屬 pg 專屬限制, 無法建欄, 不在此列
+    //F21(128 字元欄名)超過 PostgreSQL 識別字上限 63 bytes, 無法建欄, 不在此列; F26(Infinity)另見下方〈schema cases whose expectation changed〉
     let CL2 = 'twl2'
     let cols = ['constructor', 'toString', 'hasOwnProperty', 'length', 'prototype', '姓名', 'á', 'ID']
     let POS = ['F04', 'F05', 'F07', 'F16', 'F17', 'F18', 'F19', 'F20', 'F25']
@@ -177,35 +179,37 @@ describe('whitelist: column names that the shared grammar allows and the series 
 })
 
 
+//spy, 暫時以計數用之子類別取代 pg.Client(WOrm 於建構時取用 pg.Client, 故須在 mk() 之前呼叫), 並計 connect 與 query
+let spy = () => {
+    let st = { nCtor: 0, nConnect: 0, nQuery: 0 }
+    let Ori = pg.Client
+    let oriConnect = Ori.prototype.connect
+    let oriQuery = Ori.prototype.query
+    pg.Client = class extends Ori {
+        constructor(...a) {
+            super(...a)
+            st.nCtor += 1
+        }
+    }
+    Ori.prototype.connect = function(...a) {
+        st.nConnect += 1
+        return oriConnect.apply(this, a)
+    }
+    Ori.prototype.query = function(...a) {
+        st.nQuery += 1
+        return oriQuery.apply(this, a)
+    }
+    st.restore = () => {
+        pg.Client = Ori
+        Ori.prototype.connect = oriConnect
+        Ori.prototype.query = oriQuery
+    }
+    return st
+}
+
+
 describe('whitelist: a bad find sends nothing to PostgreSQL (S11)', function() {
     let rejs = cvCases.cases.filter((c) => c.expect === 'REJ')
-    //spy, 暫時以計數用之子類別取代 pg.Client(WOrm 於建構時取用 pg.Client, 故須在 mk() 之前呼叫), 並計 connect 與 query
-    let spy = () => {
-        let st = { nCtor: 0, nConnect: 0, nQuery: 0 }
-        let Ori = pg.Client
-        let oriConnect = Ori.prototype.connect
-        let oriQuery = Ori.prototype.query
-        pg.Client = class extends Ori {
-            constructor(...a) {
-                super(...a)
-                st.nCtor += 1
-            }
-        }
-        Ori.prototype.connect = function(...a) {
-            st.nConnect += 1
-            return oriConnect.apply(this, a)
-        }
-        Ori.prototype.query = function(...a) {
-            st.nQuery += 1
-            return oriQuery.apply(this, a)
-        }
-        st.restore = () => {
-            pg.Client = Ori
-            Ori.prototype.connect = oriConnect
-            Ori.prototype.query = oriQuery
-        }
-        return st
-    }
 
     it('should not construct a client, connect or query for any rejected case of the table (select and delAll)', async function() {
         this.timeout(120000)
@@ -253,6 +257,72 @@ describe('whitelist: a bad find sends nothing to PostgreSQL (S11)', function() {
 })
 
 
+describe('whitelist: schema cases whose expectation changed with the knex rewrite (F21 column name > 63 bytes, F26 Infinity)', function() {
+    let CL3 = 'twl3'
+    let remain3 = async () => (await admin.query(`SELECT id FROM ${CL3} ORDER BY id`)).rows.map((x) => x.id)
+    after(async function() {
+        await admin.query(`DROP TABLE IF EXISTS ${CL3}`).catch(() => {})
+    })
+
+    it('F21: a 128-char column name (series-legal) is rejected by the pg-only stage before any connection (> 63 bytes; 63 bytes is accepted)', async function() {
+        let c = cvCases.cases.find((x) => x.id === 'F21')
+        assert.ok(c && c.schema === true && c.expect === 'OK') //系列案例表: 共用層合法, schema 案
+        await reset()
+        let st = spy()
+        let evs = []
+        let rs
+        let rd
+        let r63
+        let r64u
+        try {
+            let wo = mk()
+            wo.on('error', (mode) => evs.push(mode))
+            rs = await wo.select(c.find()).then(() => null, (e) => e)
+            rd = await wo.delAll(c.find()).then(() => null, (e) => e)
+            //UTF-8 計: '姓' 為 3 bytes, 22 個 = 66 bytes(> 63, 雖僅 22 字元)
+            r64u = await wo.delAll({ ['姓'.repeat(22)]: 'x' }).then(() => null, (e) => e)
+        }
+        finally {
+            st.restore()
+        }
+        for (let e of [rs, rd, r64u]) {
+            assert.ok(e instanceof Error && /^invalid find: column name is too long \(> 63 bytes\) at \[find\./.test(e.message), String(e && e.message)) //pg 專屬限制
+        }
+        assert.strictEqual(st.nCtor, 0, 'no pg.Client for a column name over 63 bytes') //S11
+        assert.strictEqual(st.nQuery, 0)
+        assert.deepStrictEqual(evs, ['select', 'delAll', 'delAll']) //S5 各恰 1 次
+        assert.deepStrictEqual(await remain(), ALL)
+        //63 bytes 恰為上限: 通過檢核, 由 PG 回報欄不存在(twl 無此欄)
+        r63 = await mk().select({ ['x'.repeat(63)]: 1 }).then(() => null, (e) => e)
+        assert.ok(r63 instanceof Error && r63.code === '42703', String(r63 && r63.message))
+    })
+
+    it('F26: {Infinity:1} passes the validator (behavior change 2): PostgreSQL reports the column does not exist on twl, and it hits rows of a table that has the column', async function() {
+        let c = cvCases.cases.find((x) => x.id === 'F26')
+        assert.ok(c && c.schema === true && c.expect === 'OK')
+        await reset()
+        let evs = []
+        let wo = mk()
+        wo.on('error', (mode) => evs.push(mode))
+        let rs = await wo.select(c.find()).then(() => null, (e) => e)
+        let rd = await wo.delAll(c.find()).then(() => null, (e) => e)
+        assert.ok(rs instanceof Error && rs.code === '42703' && /does not exist/.test(rs.message), String(rs && rs.message)) //原為 invalid find(pg 專屬), 今由 PG 回報
+        assert.ok(typeof rd === 'string' && /does not exist/.test(rd), String(rd)) //delAll 之 DB 錯誤為字串(Q10)
+        assert.deepStrictEqual(evs, ['select', 'delAll'])
+        assert.deepStrictEqual(await remain(), ALL)
+        //正向: 有 Infinity 欄之表, select 命中 = delAll 刪除(S1)
+        await admin.query(`DROP TABLE IF EXISTS ${CL3}`)
+        await admin.query(`CREATE TABLE ${CL3} (id TEXT PRIMARY KEY, "Infinity" INTEGER)`)
+        await admin.query(`INSERT INTO ${CL3} VALUES ('a1', 1), ('a2', 2), ('a3', NULL)`)
+        let wo3 = WOrm({ url: ct.url, db: ct.db, cl: CL3, pk: 'id' })
+        assert.deepStrictEqual(ids(await wo3.select(c.find())), ['a1'])
+        let rd3 = await wo3.delAll(c.find())
+        assert.strictEqual(rd3.n, 1)
+        assert.deepStrictEqual(await remain3(), ['a2', 'a3'])
+    })
+})
+
+
 describe('whitelist: the checked copy is what gets used (S10)', function() {
     it('should read each property of the caller find exactly once (Proxy get traps counted) and use the read values', async function() {
         await reset()
@@ -296,7 +366,7 @@ describe('whitelist: the checked copy is what gets used (S10)', function() {
         assert.deepStrictEqual(await remain(), ALL)
     })
 
-    it('should hand mongo-sql nothing of the caller object: the SQL values are the checked ones even if the caller changes the find between the check and building the SQL (select)', async function() {
+    it('should hand the SQL builder nothing of the caller object: the SQL values are the checked ones even if the caller changes the find between the check and building the SQL (select)', async function() {
         await reset()
         let wo = mk()
         let find = { g: 'A', age: { $gt: 20 } }
@@ -350,7 +420,9 @@ describe('whitelist: the checked copy is what gets used (S10)', function() {
                 delete Array.prototype[0]
             }
         }
-        //視窗: 檢核開始(Proxy 之描述子陷阱)到連線之前; 之後還原, 其餘程式(pg、mongo-sql)不受影響
+        //視窗: 檢核開始(find 之 Proxy 描述子陷阱)起. select 於 cvFind 之後緊接 cvOrder(早於 knex 建句), 以 order 之 Proxy 陷阱還原, 視窗恰為 cvFind;
+        //delAll 無此接縫, 視窗延伸至 knex 建句: knex 內部以索引指派建陣列, 屬本套件控制範圍外(R1: 安裝 Array.prototype 數字索引 accessor 屬程式碼執行權層級),
+        //判準為 fail-closed(結果正確, 或以 statement check reject 且未刪任何列), 另以直接呼叫 cvFind 驗證檢核本身不以索引指派
         let oriConnect = pg.Client.prototype.connect
         pg.Client.prototype.connect = function(...a) {
             disarm()
@@ -368,25 +440,55 @@ describe('whitelist: the checked copy is what gets used (S10)', function() {
                 }
             })
         }
+        let orderDisarms = () => new Proxy({}, {
+            get(t, k, r) {
+                disarm()
+                return Reflect.get(t, k, r)
+            }
+        })
+        let fdel = () => ({ $or: [{ g: 'A' }, { id: 'a5' }], flag: { $eq: false, $ne: true } })
         let wo = mk()
+        let nEv = 0
+        wo.on('error', () => {
+            nEv += 1 //不用陣列 push: 視窗內之索引指派會被測試自己安裝之 setter 吞掉
+        })
         let rs
         let rd
+        let ir
+        let nSel
         try {
-            rs = await wo.select(mkf({ $and: [{ g: 'A' }], t: { $in: ['q', 'r'] } }))
+            rs = await wo.select(mkf({ $and: [{ g: 'A' }], t: { $in: ['q', 'r'] } }), orderDisarms())
+            nSel = swallowed
+            ir = cvFind(mkf(fdel()))
+            disarm()
             await reset()
-            rd = await wo.delAll(mkf({ $or: [{ g: 'A' }, { id: 'a5' }], flag: { $eq: false, $ne: true } }))
+            rd = await wo.delAll(mkf(fdel())).then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }))
         }
         finally {
             disarm()
             pg.Client.prototype.connect = oriConnect
         }
         assert.deepStrictEqual(ids(rs), ['a2']) //g=A 且 t in (q,r)
-        assert.strictEqual(rd.n, 2) //flag=false 且 (g=A 或 id=a5): a2、a5
-        assert.deepStrictEqual(await remain(), ['a1', 'a3', 'a4', 'a6'])
-        assert.strictEqual(swallowed, 0, 'no array index is assigned by cvFind')
+        assert.strictEqual(nSel, 0, 'no array index is assigned by cvFind (select)') //S10
+        //cvFind 於視窗內產出之 IR 未被吞掉: 視窗外建句, 手寫預期: (g=A 或 id=a5) 且 flag IS FALSE($eq:false) 且 flag IS FALSE($ne:true)
+        let r = buildDelete(CL, ir)
+        assert.strictEqual(r.query, 'delete from "twl" as "$t" where ("g" = $1 or "id" = $2) and "flag" IS FALSE and "flag" IS FALSE')
+        assert.deepStrictEqual([...r.values], ['A', 'a5'])
+        //delAll(視窗含 knex 建句): fail-closed
+        let left = await remain()
+        if (rd.ok) {
+            assert.strictEqual(rd.v.n, 2) //flag=false 且 (g=A 或 id=a5): a2、a5
+            assert.deepStrictEqual(left, ['a1', 'a3', 'a4', 'a6'])
+            assert.strictEqual(nEv, 0)
+        }
+        else {
+            assert.ok(rd.e instanceof Error && /^invalid find: internal statement check failed \(statement check\): .+ at \[find\]$/.test(rd.e.message), String((rd.e && rd.e.message) || rd.e))
+            assert.deepStrictEqual(left, ALL) //未刪任何列
+            assert.strictEqual(nEv, 1) //恰 1 次
+        }
     })
 
-    it('should hand mongo-sql nothing of the caller object: delAll deletes the checked condition even if the caller changes the find after the check (delAll)', async function() {
+    it('should hand the SQL builder nothing of the caller object: delAll deletes the checked condition even if the caller changes the find after the check (delAll)', async function() {
         await reset()
         let wo = mk()
         let find = { g: 'A' }

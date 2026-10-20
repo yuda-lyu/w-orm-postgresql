@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dateTimeOf">dateTimeOf</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isBufferValue">isBufferValue</a></li><li><a href="global.html#isCleanStr">isCleanStr</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isDateValue">isDateValue</a></li><li><a href="global.html#isPlainObject">isPlainObject</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
     
 </nav>
 
@@ -125,7 +125,7 @@
 
         
             
-<h4 class="name" id="dateTimeOf"><span class="type-signature"></span>dateTimeOf<span class="type-signature"></span></h4>
+<h4 class="name" id="dialectPg"><span class="type-signature"></span>dialectPg<span class="type-signature"></span></h4>
 
 
 
@@ -134,13 +134,13 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>以內部槽取Date之時間值(毫秒), 非Date回傳undefined; 無效Date回傳NaN</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>PostgreSQL 方言(提供 lowerFind / emitKnex 注入)</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line78">line 78</a>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line27">line 27</a>
     </li></ul></dd>
     
 
@@ -180,141 +180,7 @@
 
 
 <div class="description usertext">
-    <p>以內部槽取Date之時間值(毫秒), 非Date回傳undefined; 無效Date回傳NaN</p>
-</div>
-
-
-
-
-
-
-
-
-        
-            
-<h4 class="name" id="isBufferValue"><span class="type-signature"></span>isBufferValue<span class="type-signature"></span></h4>
-
-
-
-
-
-<dl class="details">
-    
-    <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>是否為Buffer</p></li></ul></dd>
-    
-
-    
-    <dt class="tag-source">Source:</dt>
-    <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line86">line 86</a>
-    </li></ul></dd>
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-</dl>
-
-
-
-
-
-<div class="description usertext">
-    <p>是否為Buffer</p>
-</div>
-
-
-
-
-
-
-
-
-        
-            
-<h4 class="name" id="isCleanStr"><span class="type-signature"></span>isCleanStr<span class="type-signature"></span></h4>
-
-
-
-
-
-<dl class="details">
-    
-    <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>字串是否不含NUL與孤立代理字元(兩者經UTF-8送出時被伺服器拒絕或被改為U+FFFD, 令送出之值與呼叫端給的不同)</p></li></ul></dd>
-    
-
-    
-    <dt class="tag-source">Source:</dt>
-    <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line43">line 43</a>
-    </li></ul></dd>
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-</dl>
-
-
-
-
-
-<div class="description usertext">
-    <p>字串是否不含NUL與孤立代理字元(兩者經UTF-8送出時被伺服器拒絕或被改為U+FFFD, 令送出之值與呼叫端給的不同)</p>
+    <p>PostgreSQL 方言(提供 lowerFind / emitKnex 注入)</p>
 </div>
 
 
@@ -336,13 +202,13 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>是否為識別字型欄名(同find與UPDATE資料鍵之文法: Unicode字母/底線開頭, 其後字母/組合符號/數字/底線, 至多63 bytes)</p>
-<p>另排除mongo-sql以+key&gt;=0判定為陣列索引之名稱(即Infinity): 該名稱無法作為find/主鍵where條件之欄名(同find之欄名文法)</p></li></ul></dd>
+<p>與find同: 63 bytes上限與系統欄名(ctid tableoid xmin xmax cmin cmax)拒收</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line79">line 79</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line71">line 71</a>
     </li></ul></dd>
     
 
@@ -383,7 +249,7 @@
 
 <div class="description usertext">
     <p>是否為識別字型欄名(同find與UPDATE資料鍵之文法: Unicode字母/底線開頭, 其後字母/組合符號/數字/底線, 至多63 bytes)</p>
-<p>另排除mongo-sql以+key&gt;=0判定為陣列索引之名稱(即Infinity): 該名稱無法作為find/主鍵where條件之欄名(同find之欄名文法)</p>
+<p>與find同: 63 bytes上限與系統欄名(ctid tableoid xmin xmax cmin cmax)拒收</p>
 </div>
 
 
@@ -395,7 +261,7 @@
 
         
             
-<h4 class="name" id="isDateValue"><span class="type-signature"></span>isDateValue<span class="type-signature"></span></h4>
+<h4 class="name" id="isSysCol"><span class="type-signature"></span>isSysCol<span class="type-signature"></span></h4>
 
 
 
@@ -404,13 +270,13 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>是否為Date物件(含無效Date)</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>是否為 PG 系統欄名(PG 保證不可建立同名欄, 但未限定引用時可被解析)</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line70">line 70</a>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line22">line 22</a>
     </li></ul></dd>
     
 
@@ -450,74 +316,7 @@
 
 
 <div class="description usertext">
-    <p>是否為Date物件(含無效Date)</p>
-</div>
-
-
-
-
-
-
-
-
-        
-            
-<h4 class="name" id="isPlainObject"><span class="type-signature"></span>isPlainObject<span class="type-signature"></span></h4>
-
-
-
-
-
-<dl class="details">
-    
-    <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>是否為一般物件(原型為Object.prototype或null)</p></li></ul></dd>
-    
-
-    
-    <dt class="tag-source">Source:</dt>
-    <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line94">line 94</a>
-    </li></ul></dd>
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-</dl>
-
-
-
-
-
-<div class="description usertext">
-    <p>是否為一般物件(原型為Object.prototype或null)</p>
+    <p>是否為 PG 系統欄名(PG 保證不可建立同名欄, 但未限定引用時可被解析)</p>
 </div>
 
 
@@ -544,7 +343,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line29">line 29</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line21">line 21</a>
     </li></ul></dd>
     
 
@@ -605,13 +404,14 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>引用表名, 規則同mongo-sql之table輔助: 已含雙引號者原樣使用, 否則依quoteObject(可含schema)</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>引用表名: 未含雙引號者以 . 分段各自加雙引號; 含雙引號者視為呼叫端已引用之 SQL 片段, 原樣輸出
+(opt.cl 為建構時設定之信任輸入, 不經詞彙驗證)</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line21">line 21</a>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line66">line 66</a>
     </li></ul></dd>
     
 
@@ -651,7 +451,77 @@
 
 
 <div class="description usertext">
-    <p>引用表名, 規則同mongo-sql之table輔助: 已含雙引號者原樣使用, 否則依quoteObject(可含schema)</p>
+    <p>引用表名: 未含雙引號者以 . 分段各自加雙引號; 含雙引號者視為呼叫端已引用之 SQL 片段, 原樣輸出
+(opt.cl 為建構時設定之信任輸入, 不經詞彙驗證)</p>
+</div>
+
+
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="splitDots"><span class="type-signature"></span>splitDots<span class="type-signature"></span></h4>
+
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>依 . 拆段(以 indexOf/slice 手動拆, 不用 String.prototype.split: 以字串為分隔符時 split 會查 separator[Symbol.split],
+內建原型被加上 Symbol.split 函式時結果可被改寫; 外審 opus F3)</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line86">line 86</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+<div class="description usertext">
+    <p>依 . 拆段(以 indexOf/slice 手動拆, 不用 String.prototype.split: 以字串為分隔符時 split 會查 separator[Symbol.split],
+內建原型被加上 Symbol.split 函式時結果可被改寫; 外審 opus F3)</p>
 </div>
 
 
@@ -672,6 +542,444 @@
 
     
 
+    <h4 class="name" id="buildDelete"><span class="type-signature"></span>buildDelete<span class="signature">(table, ir)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>組 DELETE</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line405">line 405</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>table</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>表名(opt.cl)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>ir</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>lowerFind 之輸出</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>{ query, values }</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="buildSelect"><span class="type-signature"></span>buildSelect<span class="signature">(table, ir, order<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>組 SELECT(全欄)</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="buildSql.mjs.html">buildSql.mjs</a>, <a href="buildSql.mjs.html#line389">line 389</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>table</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>表名(opt.cl)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>ir</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>lowerFind 之輸出</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>order</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>[]</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>cvOrder 之輸出</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>{ query, values }</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
     <h4 class="name" id="cvColumn"><span class="type-signature"></span>cvColumn<span class="signature">(k)</span><span class="type-signature"></span></h4>
 
     
@@ -682,13 +990,13 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>檢核單一欄名為識別字(寫入路徑之資料鍵使用, 不接受JSON取值鍵與轉型鍵)</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>檢核單一欄名為識別字(寫入路徑之資料鍵使用; 含63 bytes與系統欄檢核, 與find同)</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line161">line 161</a>
+        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line96">line 96</a>
     </li></ul></dd>
     
 
@@ -853,7 +1161,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line175">line 175</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line167">line 167</a>
     </li></ul></dd>
     
 
@@ -1002,7 +1310,7 @@
 
     
 
-    <h4 class="name" id="cvFind"><span class="type-signature"></span>cvFind<span class="signature">(find, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+    <h4 class="name" id="cvFind"><span class="type-signature"></span>cvFind<span class="signature">(find)</span><span class="type-signature"> &rarr; {Object|null}</span></h4>
 
     
 
@@ -1012,17 +1320,13 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>檢核並正規化find</p>
-<p>第一步由wsemi之cvOrmFind依系列條件白名單檢核並取得全新之null原型複本(undefined與{}為未給條件，即全部；
-傳了值卻不是條件物件者一律reject，不得視同{}而全刪)，之後只走訪該複本做pg專屬限制與轉譯。</p>
-<p>驗證過程中任何例外(含呼叫端物件之getter、Proxy trap、Symbol.toStringTag拋錯)一律轉為invalid find.
-可重入(呼叫端之trap再呼叫本函數亦不致影響外層).</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>檢核並正規化find, 回傳方言中立IR(見lowerFind); 無條件回傳null</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line422">line 422</a>
+        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line159">line 159</a>
     </li></ul></dd>
     
 
@@ -1082,11 +1386,7 @@
         <th>Type</th>
 
         
-        <th>Attributes</th>
-        
 
-        
-        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -1112,132 +1412,10 @@
             </td>
 
             
-                <td class="attributes">
-                
 
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                </td>
             
 
             <td class="description last"><p>輸入條件</p></td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>opt</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">Object</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>{}</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>輸入設定物件</p>
-                <h6>Properties</h6>
-                
-
-<table class="params">
-    <thead>
-    <tr>
-        
-        <th>Name</th>
-        
-
-        <th>Type</th>
-
-        
-        <th>Attributes</th>
-        
-
-        
-        <th>Default</th>
-        
-
-        <th class="last">Description</th>
-    </tr>
-    </thead>
-
-    <tbody>
-    
-
-        <tr>
-            
-                <td class="name"><code>nin</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">Boolean</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>true</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>輸入是否允許$nin, 預設true; 表名令mongo-sql之$nin改寫失配者須給false</p></td>
-        </tr>
-
-    
-    </tbody>
-</table>
-
-            </td>
         </tr>
 
     
@@ -1293,7 +1471,7 @@
 
         
 <div class="param-desc">
-    <p>回傳全新之正規化find(null原型), 可交mongo-sql</p>
+    <p>回傳IR</p>
 </div>
 
 
@@ -1305,6 +1483,9 @@
     <dd>
         
 <span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
 
 
 
@@ -1336,7 +1517,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line484">line 484</a>
+        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line222">line 222</a>
     </li></ul></dd>
     
 
@@ -1415,6 +1596,9 @@
             
                 
 <span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
 
 
 
@@ -1425,7 +1609,7 @@
 
             
 
-            <td class="description last"><p>已正規化之find, 或形如{[pk]: 主鍵值}之簡單條件</p></td>
+            <td class="description last"><p>已正規化之find(IR)</p></td>
         </tr>
 
     
@@ -1438,7 +1622,7 @@
             <td class="type">
             
                 
-<span class="param-type">Object</span>
+<span class="param-type">Array</span>
 
 
 
@@ -1502,7 +1686,7 @@
 
     
 
-    <h4 class="name" id="cvOrder"><span class="type-signature"></span>cvOrder<span class="signature">(order)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+    <h4 class="name" id="cvOrder"><span class="type-signature"></span>cvOrder<span class="signature">(order)</span><span class="type-signature"> &rarr; {Array}</span></h4>
 
     
 
@@ -1512,14 +1696,13 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>檢核並正規化order</p>
-<p>僅接受undefined、null、{}或一般物件, 鍵依欄名文法, 值為asc|desc(不分大小寫, 可接nulls first|last).</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>檢核並正規化order, 回傳有序陣列[{c, dir, nulls}]</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line450">line 450</a>
+        <a href="cvFind.mjs.html">cvFind.mjs</a>, <a href="cvFind.mjs.html#line183">line 183</a>
     </li></ul></dd>
     
 
@@ -1664,7 +1847,7 @@
 
         
 <div class="param-desc">
-    <p>回傳全新之order物件(null原型)</p>
+    <p>回傳排序項陣列(空陣列為不排序)</p>
 </div>
 
 
@@ -1675,7 +1858,7 @@
     </dt>
     <dd>
         
-<span class="param-type">Object</span>
+<span class="param-type">Array</span>
 
 
 
@@ -1706,14 +1889,14 @@
 (含空白、連字號、分號、關鍵字等者一律拒絕, 如'IF NOT EXISTS t'不再被當成DDL片段);
 ②含雙引號者須為完整雙引號名稱(內含之雙引號成對加倍, 以.相接).
 兩者經quoteTable(與insert、save等路徑同法)引用後, 須全由雙引號識別字以.相接而成;
-否則(含未成對之雙引號、被mongo-sql原樣輸出之JSON取值運算子或::轉型尾巴、空片段、.*)一律拒絕.
+否則(含未成對之雙引號、被原樣輸出之JSON取值運算子或::轉型尾巴、空片段、.*)一律拒絕.
 不接受非字串、空字串、含NUL或孤立代理字元者.</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line51">line 51</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line43">line 43</a>
     </li></ul></dd>
     
 
@@ -1885,6 +2068,603 @@
 
     
 
+    <h4 class="name" id="emitOrder"><span class="type-signature"></span>emitOrder<span class="signature">(b, order, D)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>把 order(cvOrder 之輸出 [{c, dir, nulls}])套到 knex builder; 方向與 nulls 僅接受固定字面值, 不經 knex 之方向參數(其對非法方向靜默改為 asc)</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="emitKnex.mjs.html">emitKnex.mjs</a>, <a href="emitKnex.mjs.html#line134">line 134</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>b</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>knex query builder</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>order</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>cvOrder 之輸出</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>D</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>dialect</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>同一 builder</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="emitWhere"><span class="type-signature"></span>emitWhere<span class="signature">(b, ir, D)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>把 IR 套到 knex builder</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="emitKnex.mjs.html">emitKnex.mjs</a>, <a href="emitKnex.mjs.html#line112">line 112</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>b</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>knex query builder</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>ir</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>lowerFind 之輸出, null 為無條件</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>D</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>dialect</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>同一 builder</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="eqNode"><span class="type-signature"></span>eqNode<span class="signature">(c, v)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>單欄等值條件之IR(主鍵條件用: selectByPk、del、save的預讀; 值須已通過主鍵檢核)</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="lowerFind.mjs.html">lowerFind.mjs</a>, <a href="lowerFind.mjs.html#line190">line 190</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>c</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>欄名(已檢核)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>v</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">*</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>主鍵值(string | number | boolean | Date)</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>IR節點</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
     <h4 class="name" id="genConflict"><span class="type-signature"></span>genConflict<span class="signature">(pk, row<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {String}</span></h4>
 
     
@@ -1904,7 +2684,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line160">line 160</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line152">line 152</a>
     </li></ul></dd>
     
 
@@ -2131,14 +2911,14 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>產生INSERT語句(參數化)</p>
-<p>輸出格式與mongo-sql相同: insert into &quot;表&quot; (&quot;k1&quot;, &quot;k2&quot;) values ($1, $2), ($3, DEFAULT).
+<p>輸出格式: insert into &quot;表&quot; (&quot;k1&quot;, &quot;k2&quot;) values ($1, $2), ($3, DEFAULT).
 欄位為各筆值非undefined之鍵的聯集(依首次出現順序), 該筆無值者填DEFAULT, null填null, 其餘為綁定參數.</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line115">line 115</a>
+        <a href="cvWrite.mjs.html">cvWrite.mjs</a>, <a href="cvWrite.mjs.html#line107">line 107</a>
     </li></ul></dd>
     
 
@@ -2227,7 +3007,7 @@
 
             
 
-            <td class="description last"><p>輸入表名(依mongo-sql規則引用, 可含schema)</p></td>
+            <td class="description last"><p>輸入表名(依quoteTable規則引用, 可含schema)</p></td>
         </tr>
 
     
@@ -2330,6 +3110,191 @@
 
 
         
+            
+
+    
+
+    <h4 class="name" id="lowerFind"><span class="type-signature"></span>lowerFind<span class="signature">(copy, opt)</span><span class="type-signature"> &rarr; {Object|null}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>cvOrmFind正規化結果 -&gt; IR</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="lowerFind.mjs.html">lowerFind.mjs</a>, <a href="lowerFind.mjs.html#line164">line 164</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>copy</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>cvOrmFind回傳之複本</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>設定: maxParams(必填,不限者傳Infinity)、checkColumn(選填,預設全過)</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>IR根節點; 無條件回傳null</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+|
+
+<span class="param-type">null</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
     
 
     
@@ -2349,7 +3314,7 @@
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 02:01:06 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

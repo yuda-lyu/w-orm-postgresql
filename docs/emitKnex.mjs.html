@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>emitKnex.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">emitKnex.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>//emitKnex: IR(見 lowerFind) -> knex where 子句. 方言差異全由 dialect 物件承擔, 本檔不含 PG 專屬字串.
+//白名單式: 只認 lowerFind 定義之六種節點與固定運算子對照, 其餘一律 throw(不產生任何 SQL).
+//所有識別子與值於發射端再檢一次(縱深): 識別子須為識別字文法, 值須為純量; knex 對字串識別子(a.b、a as b、*)、函式/Raw/物件值另有特殊解析, 不得讓其到達 knex.
+//
+//dialect 介面:
+//  boolRaw(c, op, v): 回傳 { sql, bindings } 之 raw 片段(?? 為識別子佔位), 例 PG: { sql: '?? IS TRUE', bindings: [c] }
+//  falseRaw: 恆假之 raw 片段字串(例 'false'; 不引用欄位)
+//  checkColumn(c): 同 lowerFind 之 opt.checkColumn(縱深防禦, 於發射端再檢一次)
+
+let put = (arr, v) => {
+    Object.defineProperty(arr, arr.length, { __proto__: null, value: v, enumerable: true, writable: true, configurable: true })
+}
+let OPSQL = Object.assign(Object.create(null), { eq: '=', ne: '!=', gt: '>', gte: '>=', lt: '&lt;', lte: '&lt;=' }) //null 原型: op 為 constructor、toString 等繼承名稱時查不到
+
+//reIdent: 發射端對欄名之縱深檢核(與 cvOrmFind 同文法): 防 knex 對識別子字串之特殊解析(a.b -> "a"."b"、a as b 別名、* 星號)
+let reIdent = /^[\p{L}_][\p{L}\p{M}\p{N}_]*$/u
+
+let isScalar = (v) => {
+    let t = typeof v
+    if (t === 'string' || t === 'boolean') {
+        return true
+    }
+    if (t === 'number') {
+        return !Number.isNaN(v) //±Infinity 僅可能來自主鍵路徑(eqNode; checkPk 之 isnum 接受, HEAD 行為); find 路徑之有限數值由 cvOrmFind 擔保
+    }
+    if (v !== null &amp;&amp; t === 'object') {
+        try {
+            return !Number.isNaN(Date.prototype.getTime.call(v))
+        }
+        catch (err) {
+            return false
+        }
+    }
+    return false
+}
+
+//toKnex: 交給 knex 的值。Date 以時間值重建一份獨立實體: knex 對每個值會讀其屬性(如 isRawInstance), 若把 IR 持有的同一 Date 交出去,
+//讀屬性時被執行的程式(如 Object.prototype 上的 getter)可就地改寫它, IR 與 knex 的 bindings 同時被改, 驗證時值仍「相同」(檢查之值不是呼叫端要的值);
+//交出獨立副本後, 副本被改寫則與 IR 的時間值不等, verifySql 拒收
+let toKnex = (v) => (v !== null &amp;&amp; typeof v === 'object' ? new Date(Date.prototype.getTime.call(v)) : v)
+
+let chkCol = (c, D, kind) => {
+    if (typeof c !== 'string' || !reIdent.test(c)) {
+        throw new Error(`invalid ${kind}: unsupported column name at [emit]`)
+    }
+    let bad = D.checkColumn(c)
+    if (bad) {
+        throw new Error(`invalid ${kind}: ${bad} at [emit]`)
+    }
+}
+
+//apply: 把節點加到 builder b; or=true 時以 OR 連接前一項(knex 以 orWhere 系列表達)
+let apply = (b, n, D, or) => {
+    let W = (m) => (or ? `or${m[0].toUpperCase()}${m.slice(1)}` : m)
+    if (n.t === 'and' || n.t === 'or') {
+        b[W('where')](function(g) {
+            for (let i = 0; i &lt; n.a.length; i++) {
+                apply(g, n.a[i], D, n.t === 'or' &amp;&amp; i > 0)
+            }
+        })
+        return
+    }
+    chkCol(n.c, D, 'find')
+    if (n.t === 'cmp') {
+        if (!isScalar(n.v) || typeof n.v === 'boolean' || OPSQL[n.op] === undefined) {
+            throw new Error('invalid find: unsupported node at [emit]')
+        }
+        b[W('where')](n.c, OPSQL[n.op], toKnex(n.v))
+        return
+    }
+    if (n.t === 'bool') {
+        if (typeof n.v !== 'boolean' || OPSQL[n.op] === undefined) {
+            throw new Error('invalid find: unsupported node at [emit]')
+        }
+        let r = D.boolRaw(n.c, OPSQL[n.op], n.v)
+        b[W('whereRaw')](r.sql, r.bindings)
+        return
+    }
+    if (n.t === 'null') {
+        b[W(n.not ? 'whereNotNull' : 'whereNull')](n.c)
+        return
+    }
+    if (n.t === 'in') {
+        let vs = []
+        for (let i = 0; i &lt; n.vs.length; i++) {
+            if (!isScalar(n.vs[i])) {
+                throw new Error('invalid find: unsupported node at [emit]')
+            }
+            put(vs, toKnex(n.vs[i]))
+        }
+        if (n.vs.length === 0) {
+            if (n.not) {
+                throw new Error('invalid find: unsupported node at [emit]') //$nin:[] 已於 cvOrmFind 拒收
+            }
+            b[W('whereRaw')](D.falseRaw)
+            return
+        }
+        b[W(n.not ? 'whereNotIn' : 'whereIn')](n.c, vs)
+        return
+    }
+    throw new Error('invalid find: unsupported node at [emit]')
+}
+
+/**
+ * 把 IR 套到 knex builder
+ *
+ * @param {Object} b knex query builder
+ * @param {Object|null} ir lowerFind 之輸出, null 為無條件
+ * @param {Object} D dialect
+ * @returns {Object} 同一 builder
+ */
+export function emitWhere(b, ir, D) {
+    if (ir === null) {
+        return b
+    }
+    if (ir.t === 'and') {
+        for (let i = 0; i &lt; ir.a.length; i++) {
+            apply(b, ir.a[i], D, false)
+        }
+        return b
+    }
+    apply(b, ir, D, false)
+    return b
+}
+
+/**
+ * 把 order(cvOrder 之輸出 [{c, dir, nulls}])套到 knex builder; 方向與 nulls 僅接受固定字面值, 不經 knex 之方向參數(其對非法方向靜默改為 asc)
+ *
+ * @param {Object} b knex query builder
+ * @param {Array} order cvOrder 之輸出
+ * @param {Object} D dialect
+ * @returns {Object} 同一 builder
+ */
+export function emitOrder(b, order, D) {
+    for (let i = 0; i &lt; order.length; i++) {
+        let o = order[i]
+        chkCol(o.c, D, 'order')
+        if ((o.dir !== 'asc' &amp;&amp; o.dir !== 'desc') || (o.nulls !== null &amp;&amp; o.nulls !== 'first' &amp;&amp; o.nulls !== 'last')) {
+            throw new Error('invalid order: unsupported node at [emit]')
+        }
+        b.orderByRaw(o.nulls === null ? `?? ${o.dir}` : `?? ${o.dir} nulls ${o.nulls}`, [o.c])
+    }
+    return b
+}
+
+//依 IR 推得應綁定之值(順序同 emitWhere 之走訪順序), 供輸出驗證比對: knex 回傳之 bindings 須與之逐一全等
+export function valuesOfIr(ir, out = []) {
+    if (ir === null) {
+        return out
+    }
+    if (ir.t === 'and' || ir.t === 'or') {
+        for (let i = 0; i &lt; ir.a.length; i++) {
+            valuesOfIr(ir.a[i], out)
+        }
+    }
+    else if (ir.t === 'cmp') {
+        put(out, ir.v)
+    }
+    else if (ir.t === 'in') {
+        for (let i = 0; i &lt; ir.vs.length; i++) {
+            put(out, ir.vs[i])
+        }
+    }
+    return out
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>

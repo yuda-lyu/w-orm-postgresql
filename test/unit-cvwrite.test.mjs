@@ -1,18 +1,14 @@
 /* eslint-disable no-extend-native -- 測試以暫時汙染原型(finally 還原)驗證 INSERT 產生器免疫 */
 import assert from 'assert'
-import mongoSql from 'mongo-sql'
 import { genInsert, cvColumns, quoteTable, quoteKey, isColumnName, cvTable, genConflict } from '../src/cvWrite.mjs'
 
 
-//genInsert/cvColumns/genConflict/cvTable/isColumnName 之純函數測試(不連線, 不需 docker).
+//genInsert/cvColumns/genConflict/cvTable/isColumnName/quoteTable 之純函數測試(不連線, 不需 docker).
 //規格句見 CLAUDE_rulebook.md 開頭: W1 物件值以 JSON 原樣寫入(全為綁定參數, 不被當成子查詢); W2 UPDATE 之資料鍵須為識別字;
 //W4 createTable 之表名/欄名/pk 檢核與引用; W5 ON CONFLICT 之欄名引用與略過 undefined; W7 INSERT 資料鍵含 NUL/孤立代理字元之檢核錯誤
+//mongo-sql 已移除: 原「與 mongo-sql 輸出逐字差分」之案改為手寫之預期 SQL 字串與值陣列(依 R7 之輸出格式推導)
 
 
-let viaMongoSql = (table, rows) => {
-    let r = mongoSql.sql({ type: 'insert', table, values: rows })
-    return { query: r.query, values: r.values }
-}
 class Foo {
     constructor() {
         this.type = 'select'
@@ -21,32 +17,103 @@ class Foo {
 }
 
 
-describe('genInsert: same SQL and values as mongo-sql for ordinary rows (W1, compat)', function() {
-    let d = new Date('2020-01-02T03:04:05.000Z')
-    let b = Buffer.from('ab')
+describe('quoteTable: unquoted names are split on "." and each part double quoted; names containing a double quote are used as is', function() {
+    //手寫表(輸入 → 輸出); 規則: 不含 " 者以 . 分段各加雙引號(不做其他檢核), 含 " 者視為呼叫端已引用之片段而原樣輸出
     let cases = [
-        ['single row', [{ time: 1, name: 'a' }]],
-        ['null becomes literal null', [{ time: 1, name: null, n: 5 }]],
-        ['boolean, number, string, Date, Buffer, bigint', [{ time: 1, ok: true, n: 5, s: 'x', d, b, big: 10n }]],
-        ['array value', [{ time: 1, arr: [1, 2, 3] }]],
-        ['object value without type key', [{ time: 1, js: { a: 1, b: [1, { c: 2 }] } }]],
-        ['union of keys with DEFAULT', [{ time: 1, name: 'a' }, { time: 2, tag: 'x', name: undefined }]],
-        ['undefined values are skipped', [{ time: 1, name: undefined, n: 2 }]],
-        ['many rows', Array.from({ length: 50 }, (_, i) => ({ time: i, name: `n${i}`, v: i / 2 }))],
-        ['key with dot', [{ 'time': 1, 'a.b': 2 }]],
-        ['unicode key', [{ time: 1, 中文: 'x' }]],
-        ['string starting and ending with $', [{ time: 1, name: '$name$' }]],
+        ['a', '"a"'],
+        ['twrite', '"twrite"'],
+        ['MixedCase', '"MixedCase"'], //不折為小寫
+        ['s.t', '"s"."t"'],
+        ['public.tprobe', '"public"."tprobe"'],
+        ['db.s.t', '"db"."s"."t"'], //三段
+        ['"Po_Q"', '"Po_Q"'], //預引號
+        ['"s"."t"', '"s"."t"'],
+        ['"rvo.dot"', '"rvo.dot"'], //含點之預引號: 不分段
+        ['"a.b".c', '"a.b".c'], //含 " 者原樣(不補引號)
+        ['a"b', 'a"b'],
+        ['a$b', '"a$b"'],
+        ['$t', '"$t"'],
+        ['tt3$d', '"tt3$d"'],
+        ['a?b', '"a?b"'], //? 不被當成佔位符
+        ['?', '"?"'],
+        ['中文表', '"中文表"'],
+        ['ключ.表', '"ключ"."表"'],
+        ['a'.repeat(63), `"${'a'.repeat(63)}"`], //63 bytes
+        ['中'.repeat(21), `"${'中'.repeat(21)}"`], //63 bytes(UTF-8 每字 3 bytes)
+        ['', '""'], //空字串
+        ['a b', '"a b"'], //含空白
+        [' a.b ', '" a"."b "'],
+        ['a..b', '"a".""."b"'],
+        ['rvo|p', '"rvo|p"'],
+        ['x;y', '"x;y"'],
     ]
-    cases.forEach(([label, rows]) => {
-        it(`should give the same query text and values for ${label}`, function() {
-            let a = genInsert('tprobe', rows)
-            let m = viaMongoSql('tprobe', rows)
-            assert.strictEqual(a.query, m.query) //W1 相容
-            assert.deepStrictEqual(a.values, m.values)
+    cases.forEach(([t, want]) => {
+        it(`should quote ${JSON.stringify(t.length > 20 ? t.slice(0, 20) + '...' : t)} as ${JSON.stringify(want.length > 24 ? want.slice(0, 24) + '...' : want)}`, function() {
+            assert.strictEqual(quoteTable(t), want)
         })
     })
-    it('should quote schema-qualified table names like mongo-sql', function() {
-        assert.strictEqual(genInsert('public.tprobe', [{ time: 1 }]).query, viaMongoSql('public.tprobe', [{ time: 1 }]).query)
+})
+
+
+describe('genInsert: hand-written expected SQL text and values for ordinary rows (W1, R7 output format)', function() {
+    let d = new Date('2020-01-02T03:04:05.000Z')
+    let b = Buffer.from('ab')
+    let check = (rows, query, values, table = 'tprobe') => {
+        let r = genInsert(table, rows)
+        assert.strictEqual(r.query, query)
+        assert.deepStrictEqual(r.values, values)
+        return r
+    }
+    it('should give a single row', function() {
+        check([{ time: 1, name: 'a' }], 'insert into "tprobe" ("time", "name") values ($1, $2)', [1, 'a'])
+    })
+    it('should write null as the literal null (not a bound parameter) and number the other parameters in order', function() {
+        check([{ time: 1, name: null, n: 5 }], 'insert into "tprobe" ("time", "name", "n") values ($1, null, $2)', [1, 5])
+    })
+    it('should bind boolean, number, string, Date, Buffer and bigint values as they are', function() {
+        let r = check([{ time: 1, ok: true, n: 5, s: 'x', d, b, big: 10n }], 'insert into "tprobe" ("time", "ok", "n", "s", "d", "b", "big") values ($1, $2, $3, $4, $5, $6, $7)', [1, true, 5, 'x', d, b, 10n])
+        assert.strictEqual(r.values[4], d)
+        assert.strictEqual(r.values[5], b)
+    })
+    it('should bind array and object values as one parameter each', function() {
+        let js = { a: 1, b: [1, { c: 2 }] }
+        check([{ time: 1, arr: [1, 2, 3] }], 'insert into "tprobe" ("time", "arr") values ($1, $2)', [1, [1, 2, 3]])
+        let r = check([{ time: 1, js }], 'insert into "tprobe" ("time", "js") values ($1, $2)', [1, js])
+        assert.strictEqual(r.values[1], js)
+    })
+    it('should list the union of keys in order of first appearance and fill DEFAULT for a row without that value', function() {
+        check([{ time: 1, name: 'a' }, { time: 2, tag: 'x', name: undefined }], 'insert into "tprobe" ("time", "name", "tag") values ($1, $2, DEFAULT), ($3, DEFAULT, $4)', [1, 'a', 2, 'x'])
+    })
+    it('should skip keys whose value is undefined in every row', function() {
+        check([{ time: 1, name: undefined, n: 2 }], 'insert into "tprobe" ("time", "n") values ($1, $2)', [1, 2])
+    })
+    it('should tell null (literal null) from undefined or missing (DEFAULT) across rows', function() {
+        check([{ a: null }, { a: 1 }, { a: undefined }, {}, { a: 2 }], 'insert into "tprobe" ("a") values (null), ($1), (DEFAULT), (DEFAULT), ($2)', [1, 2])
+    })
+    it('should number the parameters of many rows consecutively', function() {
+        let rows = Array.from({ length: 50 }, (_, i) => ({ time: i, name: `n${i}`, v: i / 2 }))
+        let tuples = []
+        let values = []
+        for (let i = 0; i < 50; i++) {
+            tuples.push(`($${3 * i + 1}, $${3 * i + 2}, $${3 * i + 3})`)
+            values.push(i, `n${i}`, i / 2)
+        }
+        check(rows, `insert into "tprobe" ("time", "name", "v") values ${tuples.join(', ')}`, values)
+    })
+    it('should quote keys with a dot or non-ASCII letters as one identifier each', function() {
+        check([{ 'time': 1, 'a.b': 2 }], 'insert into "tprobe" ("time", "a.b") values ($1, $2)', [1, 2])
+        check([{ time: 1, 中文: 'x' }], 'insert into "tprobe" ("time", "中文") values ($1, $2)', [1, 'x'])
+    })
+    it('should bind a string that starts and ends with $ as a literal value', function() {
+        check([{ time: 1, name: '$name$' }], 'insert into "tprobe" ("time", "name") values ($1, $2)', [1, '$name$'])
+        check([{ time: '$time$' }], 'insert into "tprobe" ("time") values ($1)', ['$time$'])
+    })
+    it('should double the double quotes inside a key', function() {
+        check([{ 'time': 1, 'a"b': 2 }], 'insert into "tprobe" ("time", "a""b") values ($1, $2)', [1, 2])
+    })
+    it('should quote a schema-qualified table name part by part, and a mixed-case one without folding', function() {
+        check([{ time: 1 }], 'insert into "public"."tprobe" ("time") values ($1)', [1], 'public.tprobe')
+        check([{ time: 1 }], 'insert into "Tt3_Case" ("time") values ($1)', [1], 'Tt3_Case')
     })
 })
 
@@ -155,19 +222,19 @@ describe('genInsert: keys and structure', function() {
             delete Object.prototype.role
         }
     })
-    it('should use a table name that already contains double quotes as is, like mongo-sql', function() {
+    it('should use a table name that already contains double quotes as is (quoteTable)', function() {
         let r = genInsert('"rvo.dot"', [{ time: 1 }])
         assert.strictEqual(r.query, 'insert into "rvo.dot" ("time") values ($1)')
-        assert.strictEqual(r.query, viaMongoSql('"rvo.dot"', [{ time: 1 }]).query)
+        assert.strictEqual(genInsert('"Po_Q"', [{ time: 1 }]).query, 'insert into "Po_Q" ("time") values ($1)')
     })
 })
 
 
 describe('cvColumns: data keys of UPDATE must be bare identifiers (W2)', function() {
-    it('should accept identifier keys', function() {
-        assert.doesNotThrow(() => cvColumns(['name', 'n_1', '中文', 'Name']))
+    it('should accept identifier keys (incl. Infinity and oid)', function() {
+        assert.doesNotThrow(() => cvColumns(['name', 'n_1', '中文', 'Name', 'Infinity', 'oid']))
     })
-    let bads = ['$inc', '$dec', '$custom', 'a.b', 'a"b', 'a b', 'a->b', 'a::int', '', '1a', '__proto__', 'c'.repeat(64), 'a;b', 'a--']
+    let bads = ['$inc', '$dec', '$custom', 'a.b', 'a"b', 'a b', 'a->b', 'a::int', '', '1a', '__proto__', 'c'.repeat(64), 'a;b', 'a--', 'ctid', 'tableoid', 'xmin', 'xmax', 'cmin', 'cmax']
     bads.forEach((k) => {
         it(`should throw unsupported column name for ${JSON.stringify(k.length > 20 ? k.slice(0, 20) + '...' : k)}`, function() {
             assert.throws(() => cvColumns(['name', k]), /unsupported column name|too long/)
@@ -272,19 +339,28 @@ describe('quoteKey: double quotes the name and doubles the quotes inside it', fu
 
 describe('isColumnName: plain identifier test shared with the find and UPDATE key grammar (W4, W6)', function() {
     it('should accept identifiers (letters incl. non-ASCII, digits, underscore; up to 63 bytes)', function() {
-        for (let k of ['time', 'Name', '_x', 'a1', 'n_1', '中文', 'ключ', 'a'.repeat(63)]) {
+        for (let k of ['time', 'Name', '_x', 'a1', 'n_1', '中文', 'ключ', 'a'.repeat(63), '中'.repeat(21)]) {
             assert.strictEqual(isColumnName(k), true, k)
         }
     })
     it('should reject everything else, and non-strings', function() {
-        for (let k of ['', 'a b', 'a"b', 'a;b', 'a.b', 'a-b', 'a$b', '$a', '1a', 'a->b', 'a::int', '__proto__', 'Infinity', 'a\u0000b', 'a\ud800b', 'a\nb', 'a'.repeat(64), '中'.repeat(22), null, undefined, 1, {}, [], Symbol('x'), true]) {
+        for (let k of ['', 'a b', 'a"b', 'a;b', 'a.b', 'a-b', 'a$b', '$a', '1a', 'a->b', 'a::int', '__proto__', 'a\u0000b', 'a\ud800b', 'a\nb', 'a'.repeat(64), '中'.repeat(22), null, undefined, 1, {}, [], Symbol('x'), true]) {
             assert.strictEqual(isColumnName(k), false, String(typeof k === 'symbol' ? 'symbol' : k))
         }
     })
-    it('should reject Infinity (mongo-sql reads it as an array index, so find cannot use it) but keep other number-like words', function() {
-        assert.strictEqual(isColumnName('Infinity'), false)
-        for (let k of ['infinity', 'NaN', 'Infinity2', 'e5', '_1']) {
+    it('should accept Infinity and other number-like words (the Infinity ban came from mongo-sql reading numeric keys as array indexes; knex has no such rule)', function() {
+        //舊規格斷言 isColumnName('Infinity') 為 false: 該限制源自 mongo-sql 以 +key>=0 判陣列索引而產生字面 undefined; 換 knex 後已無此限制(行為變更 2)
+        for (let k of ['Infinity', 'infinity', 'NaN', 'Infinity2', 'e5', '_1']) {
             assert.strictEqual(isColumnName(k), true, k)
+        }
+    })
+    it('should reject the system column names ctid, tableoid, xmin, xmax, cmin, cmax (an unqualified reference resolves to them), but accept oid and other cases', function() {
+        //行為變更 3: 欄名不加表限定後, 系統欄可被未限定識別字解析(PG 不允許建立同名欄), 一律拒收; oid 自 PG 12 起非系統欄
+        for (let k of ['ctid', 'tableoid', 'xmin', 'xmax', 'cmin', 'cmax']) {
+            assert.strictEqual(isColumnName(k), false, k)
+        }
+        for (let k of ['oid', 'XMIN', 'Ctid', 'xmin2', '_ctid']) {
+            assert.strictEqual(isColumnName(k), true, k) //引用後大小寫有別, "XMIN" 不是系統欄 xmin
         }
     })
 })

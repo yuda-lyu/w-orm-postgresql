@@ -1,5 +1,6 @@
 /* eslint-disable no-sparse-arrays, no-extend-native -- 測試刻意以稀疏陣列驗證 reject, 並暫時汙染原型(finally 還原)驗證免疫 */
 import assert from 'assert'
+import pg from 'pg'
 import WOrm from '../src/WOrmPostgresql.mjs'
 import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 
@@ -15,7 +16,12 @@ import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 //  S7 order 僅接受 asc/desc(可接 nulls first/last)
 //  S8 useCache 下檢核不被快取繞過, 快取鍵不因不同型別之值而混同
 //  S9–S14(第 33 項批 1, 系列條件白名單): 形狀檢核由 wsemi cvOrmFind 擁有(R11), 案例表逐案測試在 api-find-whitelist.test.mjs;
-//  本檔保留 pg 專屬案(布林 $ne 三值 S12, 首尾 $ 字串 S13, JSON/轉型鍵移除 S14, 63 bytes 欄名, $nin 表名, 快取, 敵意輸入)
+//  本檔保留 pg 專屬案(布林 $ne 三值 S12, 首尾 $ 字串, JSON/轉型鍵移除 S14, 63 bytes 欄名, 系統欄, 表名, 快取, 敵意輸入)
+//SQL 產生改由 knex(mongo-sql 移除)之行為變更(tmp/brief-tests.md〈本次裁示的行為變更〉第 1–9 點):
+//  1 首尾皆 $ 之字串於所有比較運算子皆為字面值($gt $gte $lt $lte 亦然), $nin 之表名守門移除
+//  2 欄名 Infinity 合法(欄是否存在由 PG 回報)    3 系統欄名 ctid tableoid xmin xmax cmin cmax 於 find/order 拒收(oid 不拒)
+//  4 欄名等於函數名或表名時 PG 回報欄不存在(42703), 條件不再對全表成立(第 76 項)    5 order 鍵僅識別字
+//  6 預引號表名可用    8 Object.prototype 汙染: SQL 不變, 或以 statement check fail-closed reject, 不得靜默改寫
 
 
 let ctName = 'worm-test-postgresql-find'
@@ -42,7 +48,8 @@ let nn = (v) => v !== null && v !== undefined
 //reset, 重建資料表與他表(tsecret供子查詢類案例驗證不得跨表讀取)
 let reset = async () => {
     await admin.query(`DROP TABLE IF EXISTS ${CL}`)
-    await admin.query(`CREATE TABLE ${CL} (time INTEGER PRIMARY KEY, name TEXT, value DOUBLE PRECISION, tag TEXT, ok BOOLEAN, js JSONB)`)
+    //name 以 COLLATE "C"(位元組序)建欄, 令字串大小比較之預期可由 JS 字串比較(ASCII 範圍內同序)獨立推得, 不隨伺服器預設定序而變
+    await admin.query(`CREATE TABLE ${CL} (time INTEGER PRIMARY KEY, name TEXT COLLATE "C", value DOUBLE PRECISION, tag TEXT, ok BOOLEAN, js JSONB)`)
     for (let r of SEED) {
         await admin.query(`INSERT INTO ${CL} VALUES ($1,$2,$3,$4,$5,$6)`, [r.time, r.name, r.value, r.tag, r.ok, r.js === null ? null : JSON.stringify(r.js)])
     }
@@ -100,8 +107,16 @@ describe('find: supported operators (S1 S4)', function() {
         ['$ne false (SQL three-valued, excludes NULL)', () => ({ ok: { $ne: false } }), (r) => r.ok === true],
         ['$eq false + $ne true (both mean ok is false)', () => ({ ok: { $eq: false, $ne: true } }), (r) => r.ok === false],
         ['$eq true + $ne true (contradiction, empty set)', () => ({ ok: { $eq: true, $ne: true } }), () => false],
-        //首尾皆 $ 之字串為字面值(S13): 等值、$eq、$ne 改以 $in/$nin 送出
+        //首尾皆 $ 之字串為字面值(行為變更 1: 所有比較運算子皆為綁定參數之字面值, 不再具欄引用義, 亦不再改寫為 $in/$nin)
         ['eq "$name$" string (literal)', () => ({ name: '$name$' }), (r) => r.name === '$name$'],
+        ['$nin ["$name$"] (literal, excludes NULL)', () => ({ name: { $nin: ['$name$'] } }), (r) => nn(r.name) && r.name !== '$name$'],
+        //$gt $gte $lt $lte 給首尾 $ 字串: 原 reject(S13 舊規), 今為字面值比較; name 欄為 COLLATE "C", 預期以 JS 字串比較(同為碼位序)推得.
+        //若被當成欄引用(name > name)則恆為假或僅等值列, 與下列預期不同
+        ['$gt "$name$" string (literal, behavior change 1)', () => ({ name: { $gt: '$name$' } }), (r) => nn(r.name) && r.name > '$name$'],
+        ['$gte "$name$" string (literal, behavior change 1)', () => ({ name: { $gte: '$name$' } }), (r) => nn(r.name) && r.name >= '$name$'],
+        ['$lt "$zz$" string (literal, behavior change 1)', () => ({ name: { $lt: '$zz$' } }), (r) => nn(r.name) && r.name < '$zz$'],
+        ['$lte "$name$" string (literal, behavior change 1)', () => ({ name: { $lte: '$name$' } }), (r) => nn(r.name) && r.name <= '$name$'],
+        ['$gt "$name$" + $lt "b" (literal range)', () => ({ name: { $gt: '$name$', $lt: 'b' } }), (r) => nn(r.name) && r.name > '$name$' && r.name < 'b'],
         ['$eq "$name$" string (literal)', () => ({ name: { $eq: '$name$' } }), (r) => r.name === '$name$'],
         ['$ne "$name$" string (literal, excludes NULL)', () => ({ name: { $ne: '$name$' } }), (r) => nn(r.name) && r.name !== '$name$'],
         ['$eq "$name$" + $in with same operator slot', () => ({ name: { $eq: '$name$', $in: ['$name$', 'aa'] } }), (r) => r.name === '$name$'],
@@ -219,11 +234,7 @@ describe('find: unsupported or untranslatable must reject (S2 S3 S5)', function(
         ['JSON path with $nin (removed)', () => ({ 'js->>k': { $nin: ['1'] } })],
         ['cast key (removed)', () => ({ 'value::text': '5' })],
         ['cast key with operator (removed)', () => ({ 'value::text': { $gte: '5' } })],
-        //首尾皆 $ 之字串於比較運算子(pg 專屬限制)
-        ['"$name$" string in $gt', () => col({ $gt: '$name$' })],
-        ['"$name$" string in $gte', () => col({ $gte: '$name$' })],
-        ['"$name$" string in $lt', () => col({ $lt: '$name$' })],
-        ['"$name$" string in $lte', () => col({ $lte: '$name$' })],
+        //首尾皆 $ 之字串於 $gt $gte $lt $lte 原為 reject(pg 專屬限制), 行為變更 1 起為字面值, 已移至 supported operators(S1 對拍)
         //共用層上限(wsemi 預設): $and/$or 1000、$in/$nin 10000、欄名 128、pg 欄名 63 bytes、綁定參數 65535
         ['$or with 1001 elements', () => ({ $or: Array.from({ length: 1001 }, (_, i) => ({ value: i })) })],
         ['$and with 1001 elements', () => ({ $and: Array.from({ length: 1001 }, (_, i) => ({ value: { $ne: i } })) })],
@@ -301,7 +312,7 @@ describe('find: unsupported or untranslatable must reject (S2 S3 S5)', function(
         ['column star', () => ({ '*': 1 })],
         ['column empty', () => ({ '': 'aa' })],
         ['column numeric', () => ({ 0: 'aa' })],
-        ['column Infinity', () => ({ Infinity: 5 })],
+        //欄名 Infinity 原於 pg 第二階段拒收(mongo-sql 視為陣列索引), 行為變更 2 起合法, 移至下方 dbRej(由 PG 回報欄不存在)與 Infinity 正向案
         ['column $x$', () => ({ $name$: 'aa' })],
         ['column with $ inside', () => ({ 'a$b': { $nin: ['x'] } })],
         ['column __proto__ (own)', () => JSON.parse('{"__proto__":{"name":"aa"}}')],
@@ -362,20 +373,32 @@ describe('find: unsupported or untranslatable must reject (S2 S3 S5)', function(
         })
     })
 
-    //欄名不存在或大小寫變體: 檢核不查 schema, 由資料庫回報(設計限制); 仍須 reject 且資料不變
+    //欄名不存在或大小寫變體: 檢核不查 schema, 由資料庫回報(設計限制); 仍須 reject 且資料不變.
+    //select 以 PG 錯誤物件 reject(SQLSTATE 42703 undefined_column), delAll 以字串(err.message, 既有 Q10)reject, 各發 1 次 error 事件(行為變更 4、7、9)
     let dbRej = [
         ['nonexistent column', () => ({ nocol: 1 })],
         ['case variant column', () => ({ Name: 'aa' })],
+        ['column Infinity (valid name since behavior change 2, not in this table)', () => ({ Infinity: 5 })],
+        ['column Infinity inside an $or', () => ({ $or: [{ name: 'aa' }, { Infinity: { $gt: 0 } }] })],
+        ['column equal to the table name ($ne)', () => ({ [CL]: { $ne: 1 } })],
+        ['column equal to the table name (null)', () => ({ [CL]: null })],
+        ['column oid (not blocked, PostgreSQL 17 tables have no oid column)', () => ({ oid: { $gt: 0 } })],
     ]
     dbRej.forEach(([label, mkFind]) => {
-        it(`should reject select and delAll and keep all rows by ${label}`, async function() {
+        it(`should reject select and delAll by the database and keep all rows by ${label}`, async function() {
             let wo = mk()
+            let evs = []
+            wo.on('error', (mode) => evs.push(mode))
             await reset()
             let rs = await settle(wo.select(mkFind()))
             let rd = await settle(wo.delAll(mkFind()))
             assert.strictEqual(rs.ok, false) //S2
             assert.strictEqual(rd.ok, false) //S2
-            assert.deepStrictEqual(await remain(), ALL)
+            assert.ok(rs.e instanceof Error && rs.e.code === '42703', `select: ${rs.e && rs.e.code} ${rs.e && rs.e.message}`) //行為變更 4 欄不存在由 PG 回報
+            assert.ok(/does not exist/.test(rs.e.message), rs.e.message) //行為變更 7
+            assert.ok(typeof rd.e === 'string' && /does not exist/.test(rd.e), `delAll: ${rd.e}`) //Q10 delAll 之 DB 錯誤為字串
+            assert.deepStrictEqual(await remain(), ALL) //資料不變
+            assert.deepStrictEqual(evs, ['select', 'delAll']) //S5 各發一次
         })
     })
 
@@ -470,19 +493,19 @@ describe('find: exceptions thrown while validating caller objects are always rep
 })
 
 
-describe('find: pk based functions with $..$ string (S6)', function() {
-    it('should get null for selectByPk("$time$")', async function() {
+describe('find: pk based functions with a $..$ string on an INTEGER pk are an ordinary PostgreSQL type error, never a column reference (S6 after R4; the TEXT pk behaviour is in api-write-safety)', function() {
+    it('should get null for selectByPk("$time$") (type error of the INTEGER pk column, not the first row)', async function() {
         await reset()
         assert.strictEqual(await mk().selectByPk('$time$'), null) //S6
     })
-    it('should get ok:0 and keep all rows for del({time:"$time$"})', async function() {
+    it('should get ok:0 (PostgreSQL type error) and keep all rows for del({time:"$time$"})', async function() {
         await reset()
         let r = await mk().del({ time: '$time$' })
         assert.strictEqual(r[0].ok, 0) //S6
         assert.strictEqual(r[0].nDeleted, 0)
         assert.deepStrictEqual(await remain(), ALL)
     })
-    it('should reject and keep all rows for save({time:"$time$"}, {autoInsert:false})', async function() {
+    it('should reject (PostgreSQL type error) and keep all rows for save({time:"$time$"}, {autoInsert:false})', async function() {
         await reset()
         let rd = await settle(mk().save({ time: '$time$', name: 'zz' }, { autoInsert: false }))
         assert.strictEqual(rd.ok, false) //S6
@@ -529,6 +552,48 @@ describe('find: order (S7)', function() {
             assert.deepStrictEqual(await remain(), ALL) //S7 資料不變
             assert.deepStrictEqual(evs, ['select']) //S5
         })
+    })
+    //order 鍵僅識別字(行為變更 5): JSON 取值鍵、::轉型鍵(原 cvOrder 舊文法可用)與系統欄名(行為變更 3)一律 invalid order, 訊息指出該鍵
+    let keyBads = [
+        ['js->>k', 'desc'],
+        ['js->k', 'asc'],
+        ['js#>k', 'asc'],
+        ['js#>>k', 'desc nulls last'],
+        ['value::text', 'asc'],
+        ['js->>k::int', 'asc'],
+        ['ctid', 'asc'],
+        ['tableoid', 'desc'],
+        ['xmin', 'asc'],
+        ['xmax', 'asc'],
+        ['cmin', 'asc'],
+        ['cmax', 'desc'],
+    ]
+    keyBads.forEach(([k, dir]) => {
+        it(`should reject select with invalid order for the order key ${k} and keep all rows (behavior change 5)`, async function() {
+            await reset()
+            let evs = []
+            let wo = mk()
+            wo.on('error', (mode) => evs.push(mode))
+            let rs = await settle(wo.select({ name: 'aa' }, { time: 'asc', [k]: dir }))
+            assert.strictEqual(rs.ok, false) //S7
+            assert.ok(rs.e instanceof Error, String(rs.e)) //S5
+            assert.strictEqual(rs.e.message, `invalid order: unsupported column name [${k}] at [order.${k}]`) //行為變更 5
+            assert.deepStrictEqual(await remain(), ALL) //資料不變
+            assert.deepStrictEqual(evs, ['select']) //S5 恰 1 次
+        })
+    })
+    it('should order by a column named Infinity once it exists (behavior change 2)', async function() {
+        await admin.query('DROP TABLE IF EXISTS tinf')
+        await admin.query('CREATE TABLE tinf (id INTEGER PRIMARY KEY, "Infinity" INTEGER)')
+        await admin.query('INSERT INTO tinf VALUES (1, 5), (2, 6), (3, NULL)')
+        try {
+            let wo = WOrm({ url: ct.url, db: ct.db, cl: 'tinf', pk: 'id' })
+            assert.deepStrictEqual((await wo.select({}, { Infinity: 'desc nulls last' })).map((x) => x.id), [2, 1, 3]) //S7
+            assert.deepStrictEqual((await wo.select({}, { Infinity: 'asc nulls first' })).map((x) => x.id), [3, 1, 2])
+        }
+        finally {
+            await admin.query('DROP TABLE IF EXISTS tinf')
+        }
     })
     it('should reject order injection even when find has bound parameters (error-based leak)', async function() {
         await reset()
@@ -598,6 +663,19 @@ describe('find: useCache (S8)', function() {
         let c = await mk().selectByPk(2) //未啟用快取之實例讀 DB
         assert.strictEqual(c.name, 'changed-outside')
     })
+    it('should share one cache key between {name:"aa"} and {$and:[{name:"aa"}]} (same condition, IR source path ignored), but not with another condition (S8)', async function() {
+        await reset()
+        let wo = mk({ useCache: true })
+        let a = await wo.select({ name: 'aa' })
+        assert.deepStrictEqual(sortNum(a.map((x) => x.time)), [1, 4])
+        await admin.query(`UPDATE ${CL} SET name = $1 WHERE time = 1`, ['changed-outside'])
+        let b = await wo.select({ $and: [{ name: 'aa' }] })
+        assert.deepStrictEqual(sortNum(b.map((x) => x.time)), [1, 4]) //S8 單項 $and 與原條件同語意, 取同一快取(單程序快取語意)
+        let c = await wo.select({ name: { $in: ['aa'] } })
+        assert.deepStrictEqual(c.map((x) => x.time), [4]) //S8 不同條件(in)不得取到上一筆快取, 讀 DB
+        let d = await wo.select({ $and: [{ name: 'aa' }] }, { time: 'desc' })
+        assert.deepStrictEqual(d.map((x) => x.time), [4]) //S8 order 不同即不同快取鍵
+    })
     it('should keep legacy reject types: select rejects with Error, delAll with the db message string (Q10, unchanged)', async function() {
         await reset()
         let wo = mk()
@@ -618,62 +696,468 @@ describe('find: useCache (S8)', function() {
 })
 
 
-describe('find: Object.prototype pollution of query options does not change select and delAll (R1)', function() {
-    it('should return and delete exactly the rows of the find although limit, columns, expression, $custom and order options are polluted', async function() {
-        await reset()
-        let wo = mk()
-        Object.prototype.limit = 1
-        Object.prototype.columns = ['1']
-        Object.prototype.expression = 'select 1; select 1; --'
-        Object.prototype.$custom = ['true']
-        Object.prototype.zzorder = 'asc; delete from tfind'
-        let a
-        let b
-        let c
+describe('find: Object.prototype pollution of option names read inside knex keeps the statement or fails closed (R1, behavior change 8)', function() {
+    //汙染值為資料型(JSON 可造: 數值、字串、陣列、物件、布林), 每案只汙染一個 knex 內部可能讀取之屬性名, 只在被測呼叫期間汙染, finally 還原.
+    //判準(行為變更 8): (a) 結果與無汙染時完全相同(select 命中集合、delAll 刪除集合), 或
+    //(b) reject 且訊息含 statement check、資料不變、未刪任何列、恰 1 次 error 事件; 第三種(命中集合不同、刪錯列、其他錯誤)一律紅
+    let PROPS = ['limit', 'offset', 'join', 'having', 'schema', 'only', 'distinct', 'returning', 'using', 'union', 'group', 'columns', 'expression', 'order', 'wrapIdentifier']
+    let VALS = [['5', 5], ['\'x\'', 'x'], ['[\'a\']', ['a']], ['{a:1}', { a: 1 }], ['true', true]]
+    let WANT = ids((r) => r.name === 'aa') //無汙染時 {name:'aa'} 之命中集合 = 刪除集合(手寫述語)
+    let reClosed = /^invalid (find|order): internal statement check failed \(statement check\): .+ at \[(find|order)\]$/
+
+    //polluted, 汙染 pairs 後執行 fn, finally 一律還原(汙染前須不存在, 以免誤刪既有屬性)
+    let polluted = async (pairs, fn) => {
+        for (let [k] of pairs) {
+            assert.ok(Object.getOwnPropertyDescriptor(Object.prototype, k) === undefined, `Object.prototype.${k} must not exist before the case`)
+        }
         try {
-            a = await wo.select({ name: 'aa' }, { time: 'desc' })
-            b = await wo.select({ $or: [{ value: 1 }, { value: { $in: [2, 3] } }] })
-            c = await wo.delAll({ value: { $gt: 8 } })
+            for (let [k, v] of pairs) {
+                Object.prototype[k] = v
+            }
+            return await fn()
         }
         finally {
-            delete Object.prototype.limit
-            delete Object.prototype.columns
-            delete Object.prototype.expression
-            delete Object.prototype.$custom
-            delete Object.prototype.zzorder
+            for (let [k] of pairs) {
+                delete Object.prototype[k]
+            }
         }
-        assert.deepStrictEqual(a.map((x) => x.time), [4, 1]) //S2 不受汙染影響
-        assert.deepStrictEqual(sortNum(b.map((x) => x.time)), [1, 2, 3])
-        assert.strictEqual(c.n, 2)
-        assert.deepStrictEqual(await remain(), [1, 2, 3, 4, 5, 6, 7, 8])
+    }
+
+    //judgeSelect, (a) 命中集合同無汙染(ordered 時連順序), 無 error 事件; 或 (b) statement check 之 Error, 恰 1 次 error 事件
+    let judgeSelect = (rs, nEv, want, ordered) => {
+        if (rs.ok) {
+            let got = rs.v.map((x) => x.time)
+            assert.deepStrictEqual(ordered ? got : sortNum(got), want, 'polluted select must hit exactly the rows of the unpolluted select') //(a)
+            assert.strictEqual(nEv, 0)
+            return
+        }
+        assert.ok(rs.e instanceof Error && reClosed.test(rs.e.message), `polluted select may only fail closed: ${(rs.e && rs.e.message) || rs.e}`) //(b) 不得為第三種
+        assert.strictEqual(nEv, 1) //(b) S5
+    }
+
+    //judgeDelAll, (a) 刪除集合同無汙染, n 為實際刪除筆數; 或 (b) statement check 之 Error, 未刪任何列, 恰 1 次 error 事件
+    let judgeDelAll = (rd, nEv, deleted, want) => {
+        if (rd.ok) {
+            assert.deepStrictEqual(deleted, want, 'polluted delAll must delete exactly the rows of the unpolluted delAll') //(a) S1
+            assert.strictEqual(rd.v.n, want.length)
+            assert.strictEqual(nEv, 0)
+            return
+        }
+        assert.ok(rd.e instanceof Error && reClosed.test(rd.e.message), `polluted delAll may only fail closed: ${(rd.e && rd.e.message) || rd.e}`) //(b) 不得為第三種
+        assert.deepStrictEqual(deleted, [], 'a rejected delAll deletes nothing') //(b) 資料不變
+        assert.strictEqual(nEv, 1) //(b) S5
+    }
+
+    //runPair, 同一汙染下各跑一次 select({name:'aa'}) 與 delAll({name:'aa'})(各自 reset), 依判準檢查
+    let runPair = async (pairs) => {
+        await reset()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (mode) => evs.push(mode))
+        let rs = await polluted(pairs, () => settle(wo.select({ name: 'aa' })))
+        let nS = evs.length
+        judgeSelect(rs, nS, WANT, false)
+        assert.deepStrictEqual(await remain(), ALL) //select 不改資料
+        let rd = await polluted(pairs, () => settle(wo.delAll({ name: 'aa' })))
+        let left = await remain()
+        judgeDelAll(rd, evs.length - nS, ALL.filter((t) => !left.includes(t)), WANT)
+    }
+
+    it('should hit and delete exactly the rows of {name:"aa"} without pollution (baseline of the cases below)', async function() {
+        assert.deepStrictEqual(WANT, [1, 4])
+        await reset()
+        let wo = mk()
+        assert.deepStrictEqual(sortNum((await wo.select({ name: 'aa' })).map((x) => x.time)), WANT)
+        let rd = await wo.delAll({ name: 'aa' })
+        assert.strictEqual(rd.n, 2)
+        assert.deepStrictEqual(await remain(), ALL.filter((t) => !WANT.includes(t)))
+    })
+
+    PROPS.forEach((k) => {
+        VALS.forEach(([vl, v]) => {
+            it(`should keep the statement or fail closed for select and delAll when Object.prototype.${k} = ${vl}`, async function() {
+                await runPair([[k, v]])
+            })
+        })
+    })
+
+    it('should keep the statement or fail closed when limit, columns, expression, $custom and an order-like name are polluted together (former case)', async function() {
+        await reset()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (mode) => evs.push(mode))
+        let pairs = [['limit', 1], ['columns', ['1']], ['expression', 'select 1; select 1; --'], ['$custom', ['true']], ['zzorder', 'asc; delete from tfind']]
+        let ra = await polluted(pairs, () => settle(wo.select({ name: 'aa' }, { time: 'desc' })))
+        judgeSelect(ra, evs.length, [4, 1], true)
+        let n0 = evs.length
+        let rb = await polluted(pairs, () => settle(wo.select({ $or: [{ value: 1 }, { value: { $in: [2, 3] } }] })))
+        judgeSelect(rb, evs.length - n0, [1, 2, 3], false)
+        assert.deepStrictEqual(await remain(), ALL)
+        n0 = evs.length
+        let rc = await polluted(pairs, () => settle(wo.delAll({ value: { $gt: 8 } })))
+        let left = await remain()
+        judgeDelAll(rc, evs.length - n0, ALL.filter((t) => !left.includes(t)), [9, 10])
+    })
+
+    //補充案(程式碼執行權等級, 非資料型汙染): 值為函數. 判準相同; 屬性名為 knex 呼叫之鉤子(如 wrapIdentifier)時亦不得靜默改寫
+    describe('supplemental: function values (code execution level)', function() {
+        PROPS.forEach((k) => {
+            it(`should keep the statement or fail closed for select and delAll when Object.prototype.${k} = () => 'zz'`, async function() {
+                await runPair([[k, () => 'zz']])
+            })
+        })
     })
 })
 
 
-describe('find: table names that break the $nin rewrite of mongo-sql (R1)', function() {
-    it('should reject $nin (instead of silently becoming $in) for a table name containing "$", and still support the other operators', async function() {
-        await admin.query('DROP TABLE IF EXISTS "t$nin"')
-        await admin.query('CREATE TABLE "t$nin" (time INTEGER PRIMARY KEY, a TEXT)')
-        await admin.query('INSERT INTO "t$nin" VALUES (1, $1), (2, $2)', ['x', 'y'])
-        let wo = WOrm({ url: ct.url, db: ct.db, cl: 't$nin' })
-        let r = await settle(wo.select({ a: { $nin: ['x'] } }))
-        assert.strictEqual(r.ok, false) //S2 不得靜默變成 $in
-        assert.ok(r.e instanceof Error && /\$nin is not supported with this table name/.test(r.e.message), r.e && r.e.message) //S5
-        let d = await settle(wo.delAll({ a: { $nin: ['x'] } }))
-        assert.strictEqual(d.ok, false)
-        assert.strictEqual((await admin.query('SELECT count(*)::int AS c FROM "t$nin"')).rows[0].c, 2)
-        assert.deepStrictEqual((await wo.select({ a: { $in: ['x'] } })).map((x) => x.time), [1]) //S4 其他運算子照常
-        assert.deepStrictEqual((await wo.select({ a: { $ne: 'x' } })).map((x) => x.time), [2])
-        assert.deepStrictEqual((await wo.select({ a: { $eq: 'x' } })).map((x) => x.time), [1]) //$eq 轉譯為 $equals, 不經 $nin 改寫
-        let rdl = await settle(wo.select({ a: { $ne: '$x$' } })) //首尾 $ 字串之 $ne 須經 $nin 字面值改寫, 表名令 $nin 不可用而 reject(不得靜默變成 $in)
-        assert.strictEqual(rdl.ok, false)
-        assert.ok(rdl.e instanceof Error && /^invalid find: /.test(rdl.e.message), rdl.e && rdl.e.message)
-        assert.deepStrictEqual((await wo.select({ a: { $eq: '$x$' } })).map((x) => x.time), []) //$eq 改 $in 字面值, 可用
-        await admin.query('DROP TABLE "t$nin"')
+describe('find: table names containing "$" (the $nin table-name guard is removed, behavior change 1)', function() {
+    //原 mongo-sql 以含表名之 RegExp 改寫 $nin, 表名含 $ 時失配而被守門拒收; knex 不改寫, $nin 與首尾 $ 字串照常可用, 且 select 命中 = delAll 刪除(S1)
+    let TN = 't$nin'
+    let resetN = async () => {
+        await admin.query(`DROP TABLE IF EXISTS "${TN}"`)
+        await admin.query(`CREATE TABLE "${TN}" (time INTEGER PRIMARY KEY, a TEXT COLLATE "C")`)
+        await admin.query(`INSERT INTO "${TN}" VALUES (1, $1), (2, $2), (3, NULL)`, ['x', 'y'])
+    }
+    let remainN = async () => (await admin.query(`SELECT time FROM "${TN}" ORDER BY time`)).rows.map((x) => x.time)
+    after(async function() {
+        await admin.query(`DROP TABLE IF EXISTS "${TN}"`).catch(() => {})
+    })
+    let cases = [
+        ['$nin ["x"] (must not silently become $in)', () => ({ a: { $nin: ['x'] } }), [2]],
+        ['$ne "$x$" (literal, excludes NULL)', () => ({ a: { $ne: '$x$' } }), [1, 2]],
+        ['$nin ["$x$", "y"]', () => ({ a: { $nin: ['$x$', 'y'] } }), [1]],
+        ['$eq "$x$" (literal, no row)', () => ({ a: { $eq: '$x$' } }), []],
+        ['$gt "$x$" (literal, byte order: "x" and "y" are greater)', () => ({ a: { $gt: '$x$' } }), [1, 2]],
+        ['$in ["x"]', () => ({ a: { $in: ['x'] } }), [1]],
+        ['$ne "x"', () => ({ a: { $ne: 'x' } }), [2]],
+    ]
+    cases.forEach(([label, mkFind, want]) => {
+        it(`should get ${JSON.stringify(want)} for select and delAll by ${label}`, async function() {
+            let wo = WOrm({ url: ct.url, db: ct.db, cl: TN })
+            await resetN()
+            let rs = await wo.select(mkFind())
+            assert.deepStrictEqual(sortNum(rs.map((x) => x.time)), want) //S4 行為變更 1
+            await resetN()
+            let rd = await wo.delAll(mkFind())
+            let left = await remainN()
+            assert.deepStrictEqual([1, 2, 3].filter((t) => !left.includes(t)), want) //S1
+            assert.strictEqual(rd.n, want.length)
+        })
     })
     it('should keep $nin working for ordinary table names', async function() {
         await reset()
         let r = await mk().select({ tag: { $nin: ['x'] } })
         assert.deepStrictEqual(sortNum(r.map((x) => x.time)), ids((x) => nn(x.tag) && x.tag !== 'x'))
+    })
+})
+
+
+describe('find: the column name Infinity is valid (behavior change 2)', function() {
+    let resetI = async () => {
+        await admin.query('DROP TABLE IF EXISTS tinf')
+        await admin.query('CREATE TABLE tinf (id INTEGER PRIMARY KEY, "Infinity" INTEGER)')
+        await admin.query('INSERT INTO tinf VALUES (1, 5), (2, 6), (3, NULL)')
+    }
+    let remainI = async () => (await admin.query('SELECT id FROM tinf ORDER BY id')).rows.map((x) => x.id)
+    after(async function() {
+        await admin.query('DROP TABLE IF EXISTS tinf').catch(() => {})
+    })
+    let cases = [
+        ['{Infinity:5}', () => ({ Infinity: 5 }), [1]],
+        ['{Infinity:{$gte:5}}', () => ({ Infinity: { $gte: 5 } }), [1, 2]],
+        ['{Infinity:null}', () => ({ Infinity: null }), [3]],
+        ['{Infinity:{$nin:[5]}} (excludes NULL)', () => ({ Infinity: { $nin: [5] } }), [2]],
+        ['{$or:[{Infinity:6},{id:3}]}', () => ({ $or: [{ Infinity: 6 }, { id: 3 }] }), [2, 3]],
+    ]
+    cases.forEach(([label, mkFind, want]) => {
+        it(`should get ${JSON.stringify(want)} for select and delAll by ${label} on a table with a column named Infinity`, async function() {
+            let wo = WOrm({ url: ct.url, db: ct.db, cl: 'tinf', pk: 'id' })
+            await resetI()
+            let rs = await wo.select(mkFind())
+            assert.deepStrictEqual(sortNum(rs.map((x) => x.id)), want) //行為變更 2
+            await resetI()
+            let rd = await wo.delAll(mkFind())
+            let left = await remainI()
+            assert.deepStrictEqual([1, 2, 3].filter((t) => !left.includes(t)), want) //S1
+            assert.strictEqual(rd.n, want.length)
+        })
+    })
+})
+
+
+describe('find: column names equal to a function name or to the table name are reported by PostgreSQL, the condition never holds for all rows (item 76, behavior change 4)', function() {
+    //欄名未加表限定且表以別名 "$t" 引用: PG 不會把不存在之欄改以函數記法 欄(表) 或整列參照解析, 一律 42703(undefined_column)
+    let TF = 'tfn'
+    let resetF = async () => {
+        await admin.query(`DROP TABLE IF EXISTS ${TF}`)
+        await admin.query(`CREATE TABLE ${TF} (id INTEGER PRIMARY KEY, t TEXT, n INTEGER)`)
+        await admin.query(`INSERT INTO ${TF} VALUES (1, 'x', 1), (2, 'y', 2), (3, NULL, NULL)`)
+    }
+    let countF = async () => (await admin.query(`SELECT count(*)::int AS c FROM ${TF}`)).rows[0].c
+    after(async function() {
+        await admin.query(`DROP TABLE IF EXISTS ${TF}`).catch(() => {})
+    })
+
+    it('should hold for all rows under the former table-qualified form (control: the danger the unqualified form removes)', async function() {
+        await resetF()
+        let r = await admin.query(`SELECT count(*)::int AS c FROM ${TF} WHERE "${TF}"."concat" <> $1`, ['x'])
+        assert.strictEqual(r.rows[0].c, 3) //舊形 "tfn"."concat" 被解析為 concat(tfn), 對全表成立
+        let r2 = await admin.query(`SELECT count(*)::int AS c FROM ${TF} WHERE "${TF}" IS NOT NULL`)
+        assert.strictEqual(r2.rows[0].c, 2) //未用別名時欄名等於表名會解析為整列參照(全欄非 NULL 之列)
+    })
+
+    let NAMES = ['concat', 'to_json', 'to_jsonb', 'row_to_json', 'pg_typeof', 'num_nulls', 'num_nonnulls', 'quote_literal', 'pg_column_size', TF, 'Concat']
+    let FINDS = [
+        ['{$ne:"x"}', (c) => ({ [c]: { $ne: 'x' } })],
+        ['null', (c) => ({ [c]: null })],
+        ['{$gt:0}', (c) => ({ [c]: { $gt: 0 } })],
+        ['{$nin:["x"]}', (c) => ({ [c]: { $nin: ['x'] } })],
+    ]
+    NAMES.forEach((c) => {
+        FINDS.forEach(([fl, mkFind]) => {
+            it(`should reject select (42703) and delAll (does not exist) and keep all rows by {${c}:${fl}}`, async function() {
+                await resetF()
+                let wo = WOrm({ url: ct.url, db: ct.db, cl: TF, pk: 'id' })
+                let evs = []
+                wo.on('error', (mode) => evs.push(mode))
+                let rs = await settle(wo.select(mkFind(c)))
+                assert.deepStrictEqual(evs, ['select']) //S5 恰 1 次
+                let rd = await settle(wo.delAll(mkFind(c)))
+                assert.strictEqual(rs.ok, false) //行為變更 4: 不再對全表成立
+                assert.ok(rs.e instanceof Error && rs.e.code === '42703', `select: ${rs.e && rs.e.code} ${rs.e && rs.e.message}`)
+                assert.strictEqual(rd.ok, false)
+                assert.ok(typeof rd.e === 'string' && /does not exist/.test(rd.e), `delAll: ${rd.e}`) //Q10 字串
+                assert.deepStrictEqual(evs, ['select', 'delAll']) //S5 各恰 1 次
+                assert.strictEqual(await countF(), 3) //資料不變
+            })
+        })
+    })
+})
+
+
+describe('find/order: system column names are rejected before any connection (behavior change 3, S11)', function() {
+    let SYS = ['ctid', 'tableoid', 'xmin', 'xmax', 'cmin', 'cmax']
+    //spy, 暫時以計數用之子類別取代 pg.Client(WOrm 於建構時取用 pg.Client, 故須在 mk() 之前呼叫), 並計 connect 與 query
+    let spy = () => {
+        let st = { nCtor: 0, nConnect: 0, nQuery: 0 }
+        let Ori = pg.Client
+        let oriConnect = Ori.prototype.connect
+        let oriQuery = Ori.prototype.query
+        pg.Client = class extends Ori {
+            constructor(...a) {
+                super(...a)
+                st.nCtor += 1
+            }
+        }
+        Ori.prototype.connect = function(...a) {
+            st.nConnect += 1
+            return oriConnect.apply(this, a)
+        }
+        Ori.prototype.query = function(...a) {
+            st.nQuery += 1
+            return oriQuery.apply(this, a)
+        }
+        st.restore = () => {
+            pg.Client = Ori
+            Ori.prototype.connect = oriConnect
+            Ori.prototype.query = oriQuery
+        }
+        return st
+    }
+
+    it('should resolve an unqualified system column on any table (control: why it is rejected, the condition holds for all rows)', async function() {
+        await reset()
+        let r = await admin.query(`SELECT count(*)::int AS c FROM ${CL} AS "$t" WHERE "tableoid" > 0`)
+        assert.strictEqual(r.rows[0].c, ALL.length)
+    })
+
+    SYS.forEach((c) => {
+        it(`should reject find and order on ${c} with invalid find|order before constructing a pg.Client, keeping all rows`, async function() {
+            await reset()
+            let st = spy()
+            let evs = []
+            let rs
+            let rd
+            let rn
+            let ro
+            try {
+                let wo = mk()
+                wo.on('error', (mode) => evs.push(mode))
+                rs = await settle(wo.select({ [c]: { $gt: 0 } }))
+                rd = await settle(wo.delAll({ [c]: { $ne: 'x' } }))
+                rn = await settle(wo.delAll({ $or: [{ name: 'aa' }, { [c]: null }] }))
+                ro = await settle(wo.select({ name: 'aa' }, { [c]: 'asc' }))
+            }
+            finally {
+                st.restore()
+            }
+            for (let r of [rs, rd, rn, ro]) {
+                assert.strictEqual(r.ok, false) //行為變更 3
+                assert.ok(r.e instanceof Error, String(r.e)) //S5
+            }
+            assert.strictEqual(rs.e.message, `invalid find: unsupported column name [${c}] at [find.${c}]`)
+            assert.strictEqual(rd.e.message, `invalid find: unsupported column name [${c}] at [find.${c}]`)
+            assert.strictEqual(rn.e.message, `invalid find: unsupported column name [${c}] at [find.$or[1].${c}]`)
+            assert.strictEqual(ro.e.message, `invalid order: unsupported column name [${c}] at [order.${c}]`)
+            assert.strictEqual(st.nCtor, 0, 'no pg.Client is constructed') //S11
+            assert.strictEqual(st.nConnect, 0, 'no connection') //S11
+            assert.strictEqual(st.nQuery, 0, 'no statement') //S11
+            assert.deepStrictEqual(evs, ['select', 'delAll', 'delAll', 'select']) //S5 各恰 1 次
+            assert.deepStrictEqual(await remain(), ALL) //資料不變
+        })
+    })
+
+    it('should not block oid (decided by PostgreSQL: undefined column on PostgreSQL 17), so a client is constructed', async function() {
+        await reset()
+        let st = spy()
+        let rs
+        let rd
+        try {
+            let wo = mk()
+            rs = await settle(wo.select({ oid: { $gt: 0 } }))
+            rd = await settle(wo.delAll({ oid: { $gt: 0 } }))
+        }
+        finally {
+            st.restore()
+        }
+        assert.ok(rs.e instanceof Error && rs.e.code === '42703', `select: ${rs.e && rs.e.message}`) //行為變更 3: oid 不拒, 由 PG 決定
+        assert.ok(typeof rd.e === 'string' && /does not exist/.test(rd.e), `delAll: ${rd.e}`)
+        assert.strictEqual(st.nCtor, 2)
+        assert.deepStrictEqual(await remain(), ALL)
+    })
+})
+
+
+describe('table names: a pre-quoted opt.cl (\'"Po_Q"\') works for select, selectByPk, save, del and delAll (behavior change 6)', function() {
+    let resetQ = async () => {
+        await admin.query('DROP TABLE IF EXISTS "Po_Q"')
+        await admin.query('DROP TABLE IF EXISTS po_q')
+        await admin.query('CREATE TABLE "Po_Q" (id TEXT PRIMARY KEY, v INTEGER)')
+        await admin.query('INSERT INTO "Po_Q" VALUES ($1, 1), ($2, 2), ($3, 3)', ['a1', 'a2', 'a3'])
+        //同名小寫表(未引用之名會被 PG 折為小寫而指到此表): 其資料不得被讀到或改動
+        await admin.query('CREATE TABLE po_q (id TEXT PRIMARY KEY, v INTEGER)')
+        await admin.query('INSERT INTO po_q VALUES ($1, 1)', ['z1'])
+    }
+    let rowsQ = async (t) => (await admin.query(`SELECT id, v FROM ${t} ORDER BY id`)).rows.map((x) => `${x.id}:${x.v}`)
+    after(async function() {
+        await admin.query('DROP TABLE IF EXISTS "Po_Q"').catch(() => {})
+        await admin.query('DROP TABLE IF EXISTS po_q').catch(() => {})
+    })
+
+    it('should read and write the quoted table only (formerly a syntax error)', async function() {
+        await resetQ()
+        let wo = WOrm({ url: ct.url, db: ct.db, cl: '"Po_Q"', pk: 'id' })
+        assert.deepStrictEqual((await wo.select({ v: { $gte: 2 } })).map((x) => x.id).sort(), ['a2', 'a3'])
+        assert.deepStrictEqual((await wo.select({}, { id: 'desc' })).map((x) => x.id), ['a3', 'a2', 'a1'])
+        assert.strictEqual((await wo.selectByPk('a2')).v, 2)
+        assert.strictEqual(await wo.selectByPk('z1'), null) //不得讀到 po_q
+        let rsv = await wo.save([{ id: 'a2', v: 20 }, { id: 'a4', v: 4 }])
+        assert.deepStrictEqual(rsv.map((x) => x.ok), [1, 1])
+        assert.deepStrictEqual(await rowsQ('"Po_Q"'), ['a1:1', 'a2:20', 'a3:3', 'a4:4'])
+        let rdel = await wo.del([{ id: 'a1' }])
+        assert.strictEqual(rdel[0].ok, 1)
+        assert.strictEqual(rdel[0].nDeleted, 1)
+        let rda = await wo.delAll({ v: { $gt: 10 } })
+        assert.strictEqual(rda.n, 1)
+        assert.deepStrictEqual(await rowsQ('"Po_Q"'), ['a3:3', 'a4:4'])
+        assert.deepStrictEqual(await rowsQ('po_q'), ['z1:1']) //同名小寫表不受影響
+    })
+})
+
+
+describe('table names: a schema-qualified opt.cl (schema.table) uses the table of that schema, not the one found by search_path', function() {
+    let TABS = [['wst1.tsame', 'a'], ['wst2.tsame', 'b'], ['public.tsame', 'c']]
+    let dropS = async () => {
+        await admin.query('DROP SCHEMA IF EXISTS wst1 CASCADE')
+        await admin.query('DROP SCHEMA IF EXISTS wst2 CASCADE')
+        await admin.query('DROP TABLE IF EXISTS public.tsame')
+    }
+    let resetS = async () => {
+        await dropS()
+        await admin.query('CREATE SCHEMA wst1')
+        await admin.query('CREATE SCHEMA wst2')
+        for (let [t, p] of TABS) {
+            await admin.query(`CREATE TABLE ${t} (id TEXT PRIMARY KEY, v INTEGER)`)
+            await admin.query(`INSERT INTO ${t} VALUES ($1, 1), ($2, 2), ($3, 3)`, [`${p}1`, `${p}2`, `${p}3`])
+        }
+    }
+    let idsOf = async (t) => (await admin.query(`SELECT id FROM ${t} ORDER BY id`)).rows.map((x) => x.id)
+    after(async function() {
+        await dropS().catch(() => {})
+    })
+
+    it('should select, selectByPk, del and delAll on wst2.tsame only (two schemas and public hold a table of the same name)', async function() {
+        await resetS()
+        let wo = WOrm({ url: ct.url, db: ct.db, cl: 'wst2.tsame', pk: 'id' })
+        assert.deepStrictEqual((await wo.select({ v: { $gte: 2 } })).map((x) => x.id).sort(), ['b2', 'b3'])
+        assert.strictEqual((await wo.selectByPk('b1')).v, 1)
+        assert.strictEqual(await wo.selectByPk('a1'), null) //不得讀到他 schema 之表
+        assert.strictEqual(await wo.selectByPk('c1'), null) //亦不得讀到 search_path 上之 public.tsame
+        let rdel = await wo.del([{ id: 'b1' }])
+        assert.strictEqual(rdel[0].nDeleted, 1)
+        let rda = await wo.delAll({ v: { $lt: 3 } })
+        assert.strictEqual(rda.n, 1) //只剩 b2 符合
+        assert.deepStrictEqual(await idsOf('wst2.tsame'), ['b3'])
+        assert.deepStrictEqual(await idsOf('wst1.tsame'), ['a1', 'a2', 'a3'])
+        assert.deepStrictEqual(await idsOf('public.tsame'), ['c1', 'c2', 'c3'])
+    })
+
+    it('should delete all rows of wst1.tsame only by delAll({})', async function() {
+        await resetS()
+        let wo = WOrm({ url: ct.url, db: ct.db, cl: 'wst1.tsame', pk: 'id' })
+        assert.deepStrictEqual((await wo.select()).map((x) => x.id).sort(), ['a1', 'a2', 'a3'])
+        let rda = await wo.delAll({})
+        assert.strictEqual(rda.n, 3)
+        assert.deepStrictEqual(await idsOf('wst1.tsame'), [])
+        assert.deepStrictEqual(await idsOf('wst2.tsame'), ['b1', 'b2', 'b3'])
+        assert.deepStrictEqual(await idsOf('public.tsame'), ['c1', 'c2', 'c3'])
+    })
+})
+
+
+describe('find: boolean equality is IS TRUE / IS FALSE and does not take part in operator resolution (user-defined domain with its own = operator)', function() {
+    //網域 wdbool(底層 BOOLEAN)上自訂 = 運算子為不嚴格之恆真函數: 若條件以 "b" = $1 送出, 對每列(含 NULL)皆成立而 delAll 刪全表;
+    //布林等值為 "b" IS TRUE / IS FALSE(不經運算子解析), 只命中值相符之列
+    let dropD = async () => {
+        await admin.query('DROP TABLE IF EXISTS tdom')
+        await admin.query('DROP DOMAIN IF EXISTS wdbool CASCADE') //一併移除依賴之函數與運算子
+    }
+    let resetD = async () => {
+        await dropD()
+        await admin.query('CREATE DOMAIN wdbool AS BOOLEAN')
+        await admin.query('CREATE FUNCTION wdbool_eq_any(wdbool, wdbool) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS \'SELECT true\'')
+        await admin.query('CREATE OPERATOR = (LEFTARG = wdbool, RIGHTARG = wdbool, FUNCTION = wdbool_eq_any)')
+        await admin.query('CREATE TABLE tdom (id INTEGER PRIMARY KEY, b wdbool)')
+        await admin.query('INSERT INTO tdom VALUES (1, true), (2, false), (3, NULL)')
+    }
+    let remainD = async () => (await admin.query('SELECT id FROM tdom ORDER BY id')).rows.map((x) => x.id)
+    after(async function() {
+        await dropD().catch(() => {})
+    })
+
+    it('should resolve "b" = $1 to the user operator and hold for all rows (control: the case reproduces)', async function() {
+        await resetD()
+        let r = await admin.query('SELECT count(*)::int AS c FROM tdom WHERE b = $1', [true])
+        assert.strictEqual(r.rows[0].c, 3)
+    })
+
+    let cases = [
+        ['{b:true}', () => ({ b: true }), [1]],
+        ['{b:false}', () => ({ b: false }), [2]],
+        ['{b:{$eq:true}}', () => ({ b: { $eq: true } }), [1]],
+        ['{b:{$ne:true}} (SQL three-valued, excludes NULL)', () => ({ b: { $ne: true } }), [2]],
+    ]
+    cases.forEach(([label, mkFind, want]) => {
+        it(`should get ${JSON.stringify(want)} for select and delAll by ${label}`, async function() {
+            let wo = WOrm({ url: ct.url, db: ct.db, cl: 'tdom', pk: 'id' })
+            await resetD()
+            let rs = await wo.select(mkFind())
+            assert.deepStrictEqual(sortNum(rs.map((x) => x.id)), want) //S4 S12
+            await resetD()
+            let rd = await wo.delAll(mkFind())
+            let left = await remainD()
+            assert.deepStrictEqual([1, 2, 3].filter((t) => !left.includes(t)), want) //S1 只刪命中之列
+            assert.strictEqual(rd.n, want.length)
+        })
     })
 })
