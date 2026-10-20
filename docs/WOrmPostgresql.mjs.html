@@ -63,7 +63,9 @@ import isint from 'wsemi/src/isint.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import evem from 'wsemi/src/evem.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
-import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf, isCleanStr } from './cvFind.mjs'
+import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
+import chkOrmData from 'wsemi/src/chkOrmData.mjs'
+import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
 import { eqNode } from './lowerFind.mjs'
 import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
@@ -84,15 +86,22 @@ let pgBools = Object.create(null)
  *
  * 本套件之主鍵欄位由opt.pk指定，預設為time，select以外之五函數皆以此欄位認定主鍵。
  * 因主鍵得為承載業務語義之欄位(如時序資料之觀測時間)，insert與save於輸入未帶有效主鍵值時不自動補值，
- * 一律以reject回報；del亦不補值，該筆回ok:0與err。
+ * 一律以reject回報(save對主鍵字串含孤立代理字元或NUL者例外，該筆回ok:0與err，見下方字串良構)；del亦不補值，該筆回ok:0與err。
  * 數據之主鍵只讀自有可列舉屬性，僅存在於原型(類別getter、Object.create之原型、被汙染之Object.prototype)者視為缺主鍵。
  * 資料表、欄位與主鍵名放進SQL時一律加雙引號(區分大小寫)，須與資料庫內名稱逐字相同。
  *
+ * 字串良構(w-orm系列規則，檢核由wsemi之chkOrmStr、chkOrmData單一擁有，錯誤訊息固定詞彙、不回顯值)：
+ * 1. 主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: &lt;原因> at [data[&lt;k>].&lt;主鍵名>])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。
+ * 2. 寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: &lt;原因> at [data[&lt;k>].&lt;路徑>])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[&lt;k>].&lt;invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。
+ * 3. 建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.&lt;名>: &lt;原因>')。
+ * 檢核作用於cloneDeep後之複本、先於連線與任何寫入(createTable之表名、主鍵名與樣本物件之鍵亦於連線之前檢核)；資料之走訪檢核在另一份獨立複本上進行(走訪會呼叫存取器，其副作用不得改動其後實際寫入者)，事件回呼收到的數據亦為獨立複本，不得影響待處理之筆。
+ * save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事件不因資料庫是否可連線而異)，批次中仍有待處理之筆時連線失敗則整批reject。本套件無autoGenPk，檢核不隨任何設定改變。既有資料不遷移(PostgreSQL以UTF-8儲存，過去寫入孤立代理字元者已被改寫為U+FFFD，無從還原，見README之檢出與清除方式)。
+ *
  * @class
  * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，預設'postgresql://127.0.0.1:5432'
- * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，預設'worm'
- * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，預設'test'
+ * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.url: ...'))，預設'postgresql://127.0.0.1:5432'
+ * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.db: ...'))，預設'worm'
+ * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.cl: ...')，否則UTF-8送出時會變為U+FFFD而誤中他表)，預設'test'
  * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)且不得為系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)，不合者建構拋出Error('invalid opt.pk')，預設'time'
  * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
@@ -102,10 +111,22 @@ function WOrmPostgresql(opt = {}) {
     //_cache
     let _cache = null
 
+    //chkName, 儲存位址名稱(url, db, cl)之良構檢核(字串良構, R17): 孤立代理字元經UTF-8送出會變為U+FFFD而指到他資料庫或他表
+    //(建構設定之信任邊界假設[名稱即呼叫端所指]於此不成立), NUL令extended協定之字串被截斷; 不合者建構即throw, 訊息固定詞彙不回顯值
+    let chkName = (name, s) => {
+        let reason = chkOrmStr(s)
+        if (reason !== null) {
+            throw new Error(`invalid opt.${name}: ${reason}`)
+        }
+    }
+
     //url
     let url = get(opt, 'url')
     if (!isestr(url)) {
         url = 'postgresql://user:password@127.0.0.1:5432'
+    }
+    else {
+        chkName('url', url)
     }
 
     //db
@@ -113,11 +134,17 @@ function WOrmPostgresql(opt = {}) {
     if (!isestr(db)) {
         db = 'worm'
     }
+    else {
+        chkName('db', db)
+    }
 
     //cl
     let cl = get(opt, 'cl')
     if (!isestr(cl)) {
         cl = 'test'
+    }
+    else {
+        chkName('cl', cl)
     }
 
     //useCache
@@ -136,26 +163,42 @@ function WOrmPostgresql(opt = {}) {
         throw new Error(isSysCol(pkName) ? 'invalid opt.pk: system column names (ctid, tableoid, xmin, xmax, cmin, cmax) are not supported' : 'invalid opt.pk: must be a plain identifier (letters, digits, underscore; not starting with a digit; up to 63 bytes)')
     }
 
-    //checkPk, 判定主鍵值是否有效
+    //idReasonOf, 主鍵值無效之固定原因字串(有效回傳null; 詞彙固定, 不回顯值, R17)
     //因主鍵欄位得由呼叫端指定, 其型別隨欄位而異, 故此處僅要求有給值而不限定型別,
     //型別與欄位不符者由PostgreSQL回報, 各函數再依其規格處置
     //僅接受原始值(字串、數值、布林)與真Date(內部槽判定), 包裝物件(Object(5)等)與其他物件一律無效(非純量值不得進入條件)
-    function checkPk(pkv) {
+    function idReasonOf(pkv) {
         let t = typeof pkv
         if (t === 'string') {
-            //含NUL或孤立代理字元者無效(後者經UTF-8送出會變為U+FFFD, 令del誤刪主鍵為U+FFFD之列);
+            //空字串無效; 含NUL或孤立代理字元者無效(後者經UTF-8送出會變為U+FFFD, 令del誤刪主鍵為U+FFFD之列), 判定由wsemi chkOrmStr單一擁有;
             //首尾皆$之字串為一般字面值(主鍵值恆為綁定參數, 不具引用義)
-            return isestr(pkv) &amp;&amp; isCleanStr(pkv)
+            return pkv === '' ? 'string is empty' : chkOrmStr(pkv)
+        }
+        if (t === 'undefined') {
+            return 'primary key is missing'
         }
         if (t === 'number') {
-            return isnum(pkv)
+            return isnum(pkv) ? null : 'unsupported primary key value'
         }
         if (t === 'boolean') {
-            return true
+            return null
         }
         //真Date(有效時間值)且不帶自有屬性/非Date原型(裝飾過之Date於各站點會被不同函數以不同方式解讀)
         //先查原型與自有鍵再取時間值: 帶自有valueOf/Symbol.toPrimitive之Date不得令呼叫端函數被執行(wsemi isDate會ToNumber)
-        return isDateValue(pkv) &amp;&amp; Object.getPrototypeOf(pkv) === Date.prototype &amp;&amp; Reflect.ownKeys(pkv).length === 0 &amp;&amp; !Number.isNaN(dateTimeOf(pkv))
+        if (isDateValue(pkv) &amp;&amp; Object.getPrototypeOf(pkv) === Date.prototype &amp;&amp; Reflect.ownKeys(pkv).length === 0 &amp;&amp; !Number.isNaN(dateTimeOf(pkv))) {
+            return null
+        }
+        return 'unsupported primary key value'
+    }
+
+    //checkPk, 判定主鍵值是否有效
+    function checkPk(pkv) {
+        return idReasonOf(pkv) === null
+    }
+
+    //idErrOf, 主鍵無效之錯誤訊息: invalid id: &lt;原因> at [data[&lt;k>].&lt;主鍵名>], k為該筆在批次內之索引(單一物件為0); 主鍵名為建構時已檢核之識別字
+    function idErrOf(reason, k) {
+        return `invalid id: ${reason} at [data[${k}].${pkName}]`
     }
 
     //ownPk, 取一筆數據之主鍵值: 只讀自有可列舉屬性, 不讀繼承值(R10, W8):
@@ -185,36 +228,69 @@ function WOrmPostgresql(opt = {}) {
         return rec
     }
 
-    //strOf, 安全字串化(Symbol等不可直接放入模板字串者), 供錯誤訊息使用
-    function strOf(x) {
-        try {
-            return String(x)
+    //reasonsWf, 主鍵之良構性原因(孤立代理字元、NUL): save對此類主鍵逐筆回ok:0(統一規格, D5); 其餘無效主鍵(未給、型別不符)屬T6之整批性錯誤
+    let reasonsWf = Object.create(null)
+    reasonsWf['string contains lone surrogate'] = true
+    reasonsWf['string contains NUL'] = true
+
+    //rowErrOf, 一筆數據寫入前之檢核, 合格回傳null, 否則回傳{ msg, perRow }(R17):
+    //v為待寫入之複本(cloneDeep後), 其主鍵即使用之主鍵; c為v之獨立檢核複本(同一時刻由v再cloneDeep而得, 其間未執行任何呼叫端程式碼, 內容與v相同),
+    //供chkOrmData走訪: chkOrmData會呼叫存取器(含cloneDeep保留之繼承getter)一次取值, 其副作用只落在c, 不會令v(其後實際寫入者)與已檢核者不同;
+    //msg為固定詞彙之錯誤訊息(不回顯值); perRow表該筆之問題是否為良構性問題(save逐筆處置, 否則為整批性錯誤);
+    //主鍵值須有效(因主鍵得承載業務語義故不自動補值; 孤立代理字元或NUL者無效)再檢資料, 故同一筆主鍵先於資料;
+    //資料之字串值與鍵名(含巢狀物件、陣列元素、Map/Set等)含孤立代理字元者無效(經UTF-8送出會變為U+FFFD, 令不同值寫成同值或鍵名撞鍵),
+    //走訪由wsemi chkOrmData單一擁有, 路徑以批次索引k為根; 值之NUL不屬共用檢核;
+    //needKeys為true者(save未開啟autoInsert)於主鍵有效之後、資料良構檢核之前先檢核資料鍵須為識別字(checkKeys, 不合者throw整批性錯誤),
+    //故良構性問題(逐筆)不遮蔽同一筆之整批性錯誤
+    function rowErrOf(v, c, k, needKeys = false) {
+        let reason = idReasonOf(ownPk(v))
+        if (reason !== null) {
+            return { msg: idErrOf(reason, k), perRow: reasonsWf[reason] === true }
         }
-        catch (err) {
-            return Object.prototype.toString.call(x)
+        if (needKeys) {
+            checkKeys(v, k)
         }
+        let r = chkOrmData(c, { root: `data[${k}]` })
+        if (r !== null) {
+            return { msg: `invalid data: ${r.reason} at [${r.path}]`, perRow: true }
+        }
+        //寫入欄名(頂層自有可列舉且值非undefined之鍵)含NUL者: NUL不屬共用檢核(chkOrmData預設不檢), 但令extended協定之Parse截斷, 與cvWrite之colsOf同判準(該處為縱深), 此處先於連線拒收;
+        //訊息不屬共用詞彙(invalid data key), 不回顯鍵名; 孤立代理之鍵已於上一步拒收
+        let ks = Object.keys(v)
+        for (let i = 0; i &lt; ks.length; i++) {
+            if (v[ks[i]] !== undefined &amp;&amp; chkOrmStr(ks[i]) !== null) {
+                return { msg: `invalid data key: contains NUL at [data[${k}].&lt;invalid key>]`, perRow: true }
+            }
+        }
+        return null
     }
 
-    //checkData, 寫入前整批檢核(於任何寫入之前一次完成, 失敗屬整批性錯誤):
-    //主鍵值須有效(因主鍵得承載業務語義故不自動補值);
-    //checkKeys為true者另要求資料鍵為識別字(save之UPDATE路徑以手寫SQL引用欄名, 不得為$inc、$custom或帶引號/點/空白之鍵)
-    function checkData(data, checkKeys) {
+    //checkData, insert與insertBulk寫入前整批檢核(於任何連線與寫入之前一次完成, 失敗屬整批性錯誤, 以最小索引之不合格筆為準)
+    function checkData(data) {
         return map(data, function(v, k) {
-            let pkv = ownPk(v)
-            if (!checkPk(pkv)) {
-                throw new Error(`invalid data[${k}].${pkName}[${strOf(pkv)}]`)
-            }
-            if (checkKeys) {
-                try {
-                    //僅檢核自有且值非undefined之鍵(undefined值不會被寫入)
-                    cvColumns(keys(ownData(v)).filter((c) => v[c] !== undefined))
-                }
-                catch (err) {
-                    throw new Error(`invalid data[${k}]: ${err.message}`)
-                }
+            let e = rowErrOf(v, cloneDeep(v), k)
+            if (e !== null) {
+                throw new Error(e.msg)
             }
             return v
         })
+    }
+
+    //pkSnapshot, 檢核當下取得之主鍵值快照: Date以內部槽重建為新Date(其後事件回呼等改動原Date物件, 不影響以此值組成之條件), 其餘原始值本身即不可變
+    function pkSnapshot(v) {
+        return cleanPk(ownPk(v))
+    }
+
+    //checkKeys, save未開啟autoInsert時UPDATE路徑以手寫SQL引用欄名, 故要求該筆資料鍵為識別字(不得為$inc、$custom或帶引號/點/空白之鍵);
+    //不合者屬整批性錯誤(於任何連線與寫入之前), 僅檢核自有且值非undefined之鍵(undefined值不會被寫入);
+    //含孤立代理字元之鍵不在此檢核(其訊息會帶出該鍵), 交由其後之chkOrmData以固定詞彙(&lt;invalid key>)逐筆回報, 與autoInsert:true一致
+    function checkKeys(v, k) {
+        try {
+            cvColumns(keys(ownData(v)).filter((c) => v[c] !== undefined &amp;&amp; chkOrmStr(c, { nul: false }) === null))
+        }
+        catch (err) {
+            throw new Error(`invalid data[${k}]: ${err.message}`)
+        }
     }
 
     //pgq, 組成pg之查詢設定物件(DDL與交易控制語句除外之所有語句皆經此):
@@ -537,6 +613,31 @@ function WOrmPostgresql(opt = {}) {
         let isErr = false
         let res = null
 
+        //sql, 引數(表名、主鍵名、數據物件之鍵)於連線之前先檢核並組成DDL: 不合者屬整批性錯誤, 不連線、不送出任何語句, reject前發出1次error事件
+        let sql = null
+        try {
+
+            //obj
+            let obj = arr
+            if (isearr(obj)) {
+                obj = obj[0]
+            }
+
+            //check
+            if (!iseobj(obj)) {
+                throw new Error(`obj[${obj}] is not an effective object`)
+            }
+
+            //sql
+            sql = genSqlForCreateTable(cl, pk, obj)
+            // console.log('sql', sql)
+
+        }
+        catch (err) {
+            emitError('createTable', arr, err)
+            return Promise.reject(err)
+        }
+
         //client
         let client = new PgClient({ connectionString })
 
@@ -563,21 +664,6 @@ function WOrmPostgresql(opt = {}) {
         }
 
         try {
-
-            //obj
-            let obj = arr
-            if (isearr(obj)) {
-                obj = obj[0]
-            }
-
-            //check
-            if (!iseobj(obj)) {
-                throw new Error(`obj[${obj}] is not an effective object`)
-            }
-
-            //sql
-            let sql = genSqlForCreateTable(cl, pk, obj)
-            // console.log('sql', sql)
 
             //create, DDL亦經pgq(extended協定): 不可堆疊執行第二語句(R8、R9)
             await client.query(pgq(sql, []))
@@ -760,7 +846,7 @@ function WOrmPostgresql(opt = {}) {
      * 由主鍵查詢單筆數據，因直接由資料表主鍵索引取值，不需如select提取數據至前端再處理，故數據量大時效能較佳
      * 註: 本套件之主鍵欄位由建構時之opt.pk指定，預設為time
      *
-     * 主鍵未命中或主鍵值無效皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
+     * 主鍵未命中或主鍵值無效(含孤立代理字元或NUL之字串)皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
      * 主鍵值之型別與欄位不符時PostgreSQL回報22P02或22007，亦屬主鍵值無效而回傳null。
      *
      * @memberOf WOrmPostgresql
@@ -889,6 +975,8 @@ function WOrmPostgresql(opt = {}) {
      * 預設回傳單一聚合物件，n為輸入筆數即本次嘗試插入之基準；nInserted為實際插入筆數，
      * 全數已存在而nInserted為0屬正常結果，不視為錯誤。同批含重複主鍵時僅首筆計入nInserted。
      * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報；首尾皆$之字串為一般字面值(主鍵值恆為綁定參數，不具引用義)。
+     * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名(含巢狀、陣列元素)含孤立代理字元者，於連線之前整批reject且不寫入任何一筆，
+     * 訊息為固定詞彙、不回顯值(invalid id: &lt;原因> at [data[&lt;k>].&lt;主鍵名>]、invalid data: &lt;原因> at [data[&lt;k>].&lt;路徑>])，k為最小索引之不合格筆。
      * INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。
      *
      * option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
@@ -935,6 +1023,19 @@ function WOrmPostgresql(opt = {}) {
             return Promise.reject(err)
         }
 
+        //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
+        //或資料含孤立代理字元者屬整批性錯誤, 於reject之前發出一次error事件, 不連線亦不寫入任何一筆
+        if (!isarr(data)) {
+            data = [data]
+        }
+        try {
+            data = checkData(data)
+        }
+        catch (err) {
+            emitError('insert', data, err)
+            return Promise.reject(err)
+        }
+
         //client
         let client = new PgClient({ connectionString })
 
@@ -961,14 +1062,6 @@ function WOrmPostgresql(opt = {}) {
         }
 
         try {
-
-            //check
-            if (!isarr(data)) {
-                data = [data]
-            }
-
-            //check data, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤
-            data = checkData(data, false)
 
             //nAll
             let nAll = size(data)
@@ -1033,6 +1126,7 @@ function WOrmPostgresql(opt = {}) {
      * 不提供逐筆結果，故不出現ok:0與err，需要逐筆處置者改用insert。
      * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報，
      * 且主鍵檢查於任何寫入之前一次完成，故整批reject時同批之有效筆數亦不會被寫入。
+     * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名含孤立代理字元者，同樣於連線之前整批reject(訊息格式同insert)。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -1057,6 +1151,19 @@ function WOrmPostgresql(opt = {}) {
         }
         catch (err) {
             emitError('insertBulk', null, err)
+            return Promise.reject(err)
+        }
+
+        //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
+        //或資料含孤立代理字元者屬整批性錯誤, 於reject之前發出一次error事件, 不連線亦不寫入任何一筆
+        if (!isarr(data)) {
+            data = [data]
+        }
+        try {
+            data = checkData(data)
+        }
+        catch (err) {
+            emitError('insertBulk', data, err)
             return Promise.reject(err)
         }
 
@@ -1086,14 +1193,6 @@ function WOrmPostgresql(opt = {}) {
         }
 
         try {
-
-            //check
-            if (!isarr(data)) {
-                data = [data]
-            }
-
-            //check data, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤
-            data = checkData(data, false)
 
             //nAll
             let nAll = size(data)
@@ -1154,7 +1253,10 @@ function WOrmPostgresql(opt = {}) {
      * [內容相同]之判定基準為待寫入物件合併進現值後與現值相同，非待寫入物件與現值全等，
      * 故只給部份欄位且該些欄位值皆與現值相同時，合併結果等於現值，nModified為0，
      * 令nModified忠實反映資料庫端是否真的寫入。
-     * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報。
+     * 因主鍵得承載業務語義，未帶有效主鍵值(未給、型別不符)時不自動補值，一律以reject回報整批。
+     * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名(含巢狀、陣列元素)含孤立代理字元、寫入之頂層鍵含NUL者，於連線之前檢出，
+     * 該筆回ok:0(n為1、nInserted與nModified為0，沿用save逐筆失敗之既有形狀)與err(invalid id|data: &lt;原因> at [data[&lt;k>]...]，固定詞彙、不回顯值)且不送查詢，
+     * 同批其他筆照常，每筆失敗發1次error事件。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -1183,14 +1285,45 @@ function WOrmPostgresql(opt = {}) {
         //autoInsert
         let autoInsert = get(option, 'autoInsert', true)
 
-        //client
-        let client = new PgClient({ connectionString })
+        //check data, 於連線之前對複本檢核(R17): 主鍵含孤立代理字元或NUL之字串, 或資料含孤立代理字元者, 該筆回ok:0與err(固定詞彙, 不回顯值)且不送查詢,
+        //同批其他筆照常; 未帶有效主鍵(未給、型別不符)屬T6之整批性錯誤, 未開啟autoInsert時有效筆之資料鍵須為識別字, 不合者亦為整批性錯誤,
+        //整批性錯誤以最小索引者為準, 於reject之前發出一次error事件, 不連線亦不寫入任何一筆; pks為檢核當下所讀之主鍵值, 其後逐筆使用同一份
+        if (!isarr(data)) {
+            data = [data]
+        }
+        let rowErrs = null
+        let pks = null
+        try {
+            rowErrs = []
+            pks = []
+            for (let k = 0; k &lt; data.length; k++) {
+                let v = data[k]
+                let c = cloneDeep(v)
+                let e = rowErrOf(v, c, k, !autoInsert)
+                if (e !== null &amp;&amp; !e.perRow) {
+                    throw new Error(e.msg)
+                }
+                rowErrs.push(e === null ? null : e.msg)
+                pks.push(pkSnapshot(v))
+            }
+        }
+        catch (err) {
+            emitError('save', data, err)
+            return Promise.reject(err)
+        }
+
+        //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
+        //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
+        let needConn = rowErrs.some((e) => e === null)
+        let client = needConn ? new PgClient({ connectionString }) : null
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            if (needConn) {
+                await client.connect()
+            }
 
         }
         catch (err) {
@@ -1210,23 +1343,32 @@ function WOrmPostgresql(opt = {}) {
 
         try {
 
-            //check
-            if (!isarr(data)) {
-                data = [data]
-            }
-
-            //check data, 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值者屬整批性錯誤;
-            //未開啟autoInsert時UPDATE以手寫SQL引用欄名, 故另要求資料鍵為識別字
-            data = checkData(data, !autoInsert)
-
             //pmSeries
-            res = await pmSeries(data, async(v) => {
+            res = await pmSeries(data, async(v, k) => {
 
                 //rest
                 let rest = null
 
-                //pkv, 只讀自有主鍵(已於checkData檢核)
-                let pkv = ownPk(v)
+                //check data, 該筆於連線之前已檢核不合格者, 不送查詢, 直接視為該筆無法處理(同批其他筆照常)
+                if (rowErrs[k] !== null) {
+
+                    //rest
+                    rest = {
+                        n: 1,
+                        nInserted: 0,
+                        nModified: 0,
+                        ok: 0,
+                        err: rowErrs[k],
+                    }
+
+                    //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
+                    emitError('save', [cloneDeep(v)], rest.err)
+
+                    return rest
+                }
+
+                //pkv, 只讀自有主鍵(已於連線之前檢核)
+                let pkv = pks[k]
 
                 //_v
                 let _v = null
@@ -1331,7 +1473,7 @@ function WOrmPostgresql(opt = {}) {
                         }
 
                         //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
-                        emitError('save', [v], rest.err)
+                        emitError('save', [cloneDeep(v)], rest.err)
 
                         return rest
                     }
@@ -1412,7 +1554,7 @@ function WOrmPostgresql(opt = {}) {
                     //由UPDATE...WHERE主鍵原子完成[查找主鍵]與[更新], 併發時不會遺失更新
 
                     //手寫參數化SQL, 所有值皆以綁定參數送出(字串值含首尾皆$者皆為字面值, 資料鍵$inc/$dec/$custom不具特殊意義, 帶type鍵之物件值為一般值);
-                    //欄名鍵已於checkData檢核為識別字, 以quoteKey雙引號引用
+                    //欄名鍵已於連線之前(checkKeys)檢核為識別字, 以quoteKey雙引號引用
                     let sets = []
                     let vals = []
                     let rec = ownData(v)
@@ -1437,7 +1579,7 @@ function WOrmPostgresql(opt = {}) {
                         }
 
                         //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
-                        emitError('save', [v], rest.err)
+                        emitError('save', [cloneDeep(v)], rest.err)
 
                         return rest
                     }
@@ -1501,12 +1643,12 @@ function WOrmPostgresql(opt = {}) {
 
                 //emit, 該筆經插入而產生者另發mode為insert之change事件, 供呼叫端區辨新增與更新
                 if (rest.nInserted === 1) {
-                    emitChange('insert', [v], rest)
+                    emitChange('insert', [cloneDeep(v)], rest)
                 }
 
                 //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
                 if (rest.ok === 0) {
-                    emitError('save', [v], rest.err)
+                    emitError('save', [cloneDeep(v)], rest.err)
                 }
 
                 return rest
@@ -1518,7 +1660,9 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            if (client !== null) {
+                await client.end()
+            }
             client = null
         }
 
@@ -1549,7 +1693,7 @@ function WOrmPostgresql(opt = {}) {
      *
      * 回傳陣列恆與輸入等長，各筆之n與nDeleted皆為主鍵命中筆數，值為0或1，未命中為0且屬正常結果。
      * 判斷某筆是否真的被刪除一律以nDeleted為準。
-     * 未帶有效主鍵值者為該筆之輸入問題，回ok:0與err且不送查詢，不中斷其餘筆數，
+     * 未帶有效主鍵值(含主鍵字串含孤立代理字元或NUL)者為該筆之輸入問題，回ok:0與err(invalid id: &lt;原因> at [data[&lt;k>].&lt;主鍵名>]，固定詞彙、不回顯值)且不送查詢，不中斷其餘筆數，
      * 以此與[主鍵未命中]之ok:1區辨。
      *
      * @memberOf WOrmPostgresql
@@ -1574,14 +1718,27 @@ function WOrmPostgresql(opt = {}) {
             return Promise.reject(err)
         }
 
-        //client
-        let client = new PgClient({ connectionString })
+        //check pk, 於連線之前對複本檢核(R17): 逐筆處置, 主鍵無效(缺主鍵、含孤立代理字元或NUL之字串等)者該筆回ok:0與err(固定詞彙, 不回顯值)且不送查詢,
+        //同批其他筆照常; pks為檢核當下所讀之主鍵值快照(只讀自有可列舉屬性, 繼承值視為缺主鍵, R10; Date已重建為新Date), 其後逐筆使用同一份,
+        //故事件回呼改動事件所帶之數據(含其中之Date主鍵)不影響其後各筆刪除之列
+        if (!isarr(data)) {
+            data = [data]
+        }
+        let reasons = map(data, (v) => idReasonOf(ownPk(v)))
+        let pks = map(data, (v) => pkSnapshot(v))
+
+        //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
+        //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
+        let needConn = reasons.some((r) => r === null)
+        let client = needConn ? new PgClient({ connectionString }) : null
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            if (needConn) {
+                await client.connect()
+            }
 
         }
         catch (err) {
@@ -1605,29 +1762,24 @@ function WOrmPostgresql(opt = {}) {
             // let database = client.db(opt.db)
             // let collection = database.collection(opt.cl)
 
-            //check
-            if (!isarr(data)) {
-                data = [data]
-            }
-
             //pmSeries
-            res = await pmSeries(data, async(v) => {
+            res = await pmSeries(data, async(v, k) => {
 
                 //rest
                 let rest = null
 
-                //pkv, 只讀自有主鍵: 繼承值(原型汙染、類別原型getter)視為缺主鍵(R10, W8)
-                let pkv = ownPk(v)
+                //pkv, 檢核當下所讀之自有主鍵
+                let pkv = pks[k]
 
                 //check pk, 未帶有效主鍵者不補值亦不送查詢, 直接視為該筆無法處理
-                if (!checkPk(pkv)) {
+                if (reasons[k] !== null) {
 
                     //rest
                     rest = {
                         n: 0,
                         nDeleted: 0,
                         ok: 0,
-                        err: `invalid ${pkName}[${strOf(pkv)}]`,
+                        err: idErrOf(reasons[k], k),
                     }
 
                     //emit, 逐筆失敗於該筆結果定案後發出, 每筆一次
@@ -1680,7 +1832,9 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            if (client !== null) {
+                await client.end()
+            }
             client = null
         }
 
@@ -1885,7 +2039,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 15:47:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 21 2026 00:07:21 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

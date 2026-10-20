@@ -21,6 +21,7 @@ export let PORTS = {
     'worm-test-pg33-whitelist': 3,
     'worm-test-pg-volume': 4,
     'worm-test-pg-matrix': 5,
+    'worm-test-pg66-wellformed': 6,
 }
 let BASE_DEFAULT = 8451
 let PORT_COUNT = 9

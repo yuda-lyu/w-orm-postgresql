@@ -10,10 +10,6 @@ let MAX_KEY = 200 //欄名鍵字元數上限(僅為防禦, 識別字另有63 byt
 
 let reIdent = /^[\p{L}_][\p{L}\p{M}\p{N}_]*$/u
 
-let reLone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
-
-export let isCleanStr = (s) => (typeof s.isWellFormed === 'function' ? s.isWellFormed() : !reLone.test(s)) && !s.includes('\u0000')
-
 let isObjLike = (v) => v !== null && typeof v === 'object'
 let tag = (v) => Object.prototype.toString.call(v)
 

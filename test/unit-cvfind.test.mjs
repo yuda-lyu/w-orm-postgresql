@@ -1,11 +1,12 @@
 /* eslint-disable no-extend-native, no-sparse-arrays, no-control-regex, no-throw-literal -- 測試刻意以稀疏陣列、控制字元與暫時汙染原型(finally 還原)驗證檢核器 */
 import assert from 'assert'
-import { cvFind, cvOrder, cvKey, cvColumn, isCleanStr } from '../src/cvFind.mjs'
+import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
+import { cvFind, cvOrder, cvKey, cvColumn } from '../src/cvFind.mjs'
 import { buildSelect, buildDelete } from '../src/buildSql.mjs'
 import { eqNode } from '../src/lowerFind.mjs'
 
 
-//cvFind/cvOrder/cvKey/cvColumn/isCleanStr 之純函數測試(不連線, 不需 docker).
+//cvFind/cvOrder/cvKey/cvColumn 與 wsemi chkOrmStr(主鍵、表名、資料鍵之良構判定,第 66 項起取代本模組私有之 isCleanStr)之純函數測試(不連線, 不需 docker).
 //規格句見 CLAUDE_rulebook.md 開頭(S1–S14)與 tmp/brief-tests.md 之行為變更:
 //  S2 不支援之運算子與無法轉譯之值必須 reject  S3 空清單與 undefined 不得成為恆真
 //  S4 受支援語意不變(預期 SQL 與 values 皆依 SQL 語意手寫, 不取自被測碼)
@@ -1188,20 +1189,20 @@ describe('cvFind: arrays are read exactly once (length, elements) and stay in th
 })
 
 
-describe('isCleanStr: strings that change on the wire are not clean (pk values, Argon round 2)', function() {
+describe('chkOrmStr (wsemi, the single owner of the well-formed check): strings that change on the wire are not clean (pk values, Argon round 2)', function() {
     it('should accept ordinary strings, emoji pairs and U+FFFD itself', function() {
-        assert.strictEqual(isCleanStr('abc'), true)
-        assert.strictEqual(isCleanStr('中文'), true)
-        assert.strictEqual(isCleanStr('😀'), true) //成對代理
-        assert.strictEqual(isCleanStr('�'), true)
-        assert.strictEqual(isCleanStr('a$b'), true)
-        assert.strictEqual(isCleanStr('$x$'), true) //首尾皆 $ 亦為一般字串
+        assert.strictEqual(chkOrmStr('abc'), null)
+        assert.strictEqual(chkOrmStr('中文'), null)
+        assert.strictEqual(chkOrmStr('😀'), null) //成對代理
+        assert.strictEqual(chkOrmStr('�'), null)
+        assert.strictEqual(chkOrmStr('a$b'), null)
+        assert.strictEqual(chkOrmStr('$x$'), null) //首尾皆 $ 亦為一般字串
     })
     it('should reject lone surrogates and NUL', function() {
-        assert.strictEqual(isCleanStr('\ud800'), false)
-        assert.strictEqual(isCleanStr('a\udc00b'), false)
-        assert.strictEqual(isCleanStr('\ude00\ud83d'), false)
-        assert.strictEqual(isCleanStr('a\u0000b'), false)
+        assert.strictEqual(chkOrmStr('\ud800'), 'string contains lone surrogate')
+        assert.strictEqual(chkOrmStr('a\udc00b'), 'string contains lone surrogate')
+        assert.strictEqual(chkOrmStr('\ude00\ud83d'), 'string contains lone surrogate')
+        assert.strictEqual(chkOrmStr('a\u0000b'), 'string contains NUL')
     })
 })
 

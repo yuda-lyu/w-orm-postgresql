@@ -5,7 +5,8 @@
 // 3. UPDATE(save之autoInsert:false)之資料鍵須為識別字(含63 bytes與系統欄檢核), 不得為帶引號/點/空白之鍵; $inc/$dec/$custom等鍵不具特殊意義
 // 4. ON CONFLICT之主鍵名與更新欄一律雙引號引用, 更新欄與INSERT欄單同一來源(colsOf), 且略過值為undefined之鍵
 // 5. createTable之表名須為引用後僅由雙引號識別字構成者(cvTable), 欄名/主鍵名須為識別字(isColumnName)
-import { cvColumn, isCleanStr } from './cvFind.mjs'
+import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
+import { cvColumn } from './cvFind.mjs'
 import { quoteTable, splitDots } from './buildSql.mjs'
 export { quoteTable }
 
@@ -41,7 +42,7 @@ let reBareSeg = /^[\p{L}_][\p{L}\p{M}\p{N}_$]*$/u
  * @throws {Error} 不合時拋出Error('invalid table name'), 訊息不回顯表名
  */
 export function cvTable(table) {
-    if (typeof table !== 'string' || table === '' || !isCleanStr(table)) {
+    if (typeof table !== 'string' || table === '' || chkOrmStr(table) !== null) {
         throw new Error('invalid table name')
     }
     if (!table.includes('"') && !splitDots(table).every((s) => reBareSeg.test(s) && Buffer.byteLength(s, 'utf8') <= 63)) {
@@ -84,7 +85,7 @@ let colsOf = (r) => {
     let ks = []
     for (let k of Object.keys(r)) {
         if (r[k] !== undefined) {
-            if (!isCleanStr(k)) {
+            if (chkOrmStr(k) !== null) {
                 throw new Error('invalid data key: contains NUL or an unpaired surrogate')
             }
             ks.push(k)

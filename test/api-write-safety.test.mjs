@@ -505,7 +505,7 @@ describe('write: wrapper objects and decorated Dates are invalid pk values (W3)'
                 assert.strictEqual(i.ok, false) //W3 整批性錯誤
                 assert.strictEqual(s.ok, false)
                 assert.strictEqual(s2.ok, false)
-                assert.ok(/invalid data\[0\]\.time/.test(i.e.message), i.e.message)
+                assert.strictEqual(i.e.message, 'invalid id: unsupported primary key value at [data[0].time]') //固定詞彙, 不回顯值(R17)
                 assert.strictEqual(await wo.selectByPk(mkDate()), null)
                 let d = await wo.del({ time: mkDate() })
                 assert.strictEqual(d[0].ok, 0)
@@ -595,7 +595,7 @@ describe('write: a record whose pk exists only on its prototype is a missing pk,
         wo.on('error', (mode) => evs.push(mode))
         let r = await settle(wo.save([{ time: 11, name: 'a' }, Object.create({ time: 12 }), { time: 13, name: 'c' }]))
         assert.strictEqual(r.ok, false) //W8 缺自有主鍵 = 缺主鍵: 整批 reject
-        assert.ok(r.e instanceof Error && /^invalid data\[1\]\.time\[undefined\]/.test(r.e.message), String(r.e))
+        assert.ok(r.e instanceof Error && r.e.message === 'invalid id: primary key is missing at [data[1].time]', String(r.e))
         assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3]) //有效之第 0、2 筆亦不寫入
         assert.deepStrictEqual(evs, ['save']) //整批性錯誤發 1 次
     })
@@ -759,16 +759,16 @@ describe('write: del with a pk that cannot be turned into text keeps the per-rec
         wo.on('error', (mode) => evs.push(mode))
         let r = await wo.del([{ time: 1 }, { time: Symbol('x') }, { time: 2 }])
         assert.deepStrictEqual(r.map((x) => x.ok), [1, 0, 1]) //逐筆, 非整批拋錯而部分刪除
-        assert.ok(/Symbol\(x\)/.test(r[1].err), r[1].err)
+        assert.strictEqual(r[1].err, 'invalid id: unsupported primary key value at [data[1].time]') //固定詞彙, 不回顯 Symbol(x)(R17)
         assert.deepStrictEqual((await rows('time')).map((x) => x.time), [3])
         assert.deepStrictEqual(evs, ['del'])
     })
 
-    it('should reject whole batch with a readable message for a Symbol pk in insert', async function() {
+    it('should reject whole batch with a fixed message (the Symbol is not echoed) for a Symbol pk in insert', async function() {
         await reset()
         let r = await settle(mk().insert({ time: Symbol('y'), name: 'a' }))
         assert.strictEqual(r.ok, false)
-        assert.ok(/invalid data\[0\]\.time\[Symbol\(y\)\]/.test(r.e.message), r.e.message)
+        assert.strictEqual(r.e.message, 'invalid id: unsupported primary key value at [data[0].time]')
         assert.strictEqual((await rows()).length, 3)
     })
 })
@@ -797,7 +797,9 @@ describe('write: pk strings that change on the wire are invalid pk values (W3)',
         let i = await settle(wo.insert({ id: 'a\u0000b', name: 'x' }))
         let s = await settle(wo.save({ id: '\ud800', name: 'x' }))
         assert.strictEqual(i.ok, false)
-        assert.strictEqual(s.ok, false)
+        assert.strictEqual(i.e.message, 'invalid id: string contains NUL at [data[0].id]')
+        assert.strictEqual(s.ok, true) //第 66 項(D5): 孤立代理主鍵之 save 由整批 reject 改為逐筆 ok:0
+        assert.deepStrictEqual([s.v.length, s.v[0].ok, s.v[0].err], [1, 0, 'invalid id: string contains lone surrogate at [data[0].id]'])
         assert.strictEqual((await admin.query(`SELECT count(*)::int AS c FROM ${CLP}`)).rows[0].c, 2)
     })
     it('should treat an invalid Date as an invalid pk', async function() {
@@ -809,7 +811,7 @@ describe('write: pk strings that change on the wire are invalid pk values (W3)',
         assert.strictEqual(await wo.selectByPk(new Date(NaN)), null)
         let i = await settle(wo.insert({ time: new Date(NaN), v: 'x' }))
         assert.strictEqual(i.ok, false)
-        assert.ok(/invalid data\[0\]\.time/.test(i.e.message), i.e.message)
+        assert.strictEqual(i.e.message, 'invalid id: unsupported primary key value at [data[0].time]')
         await admin.query(`DROP TABLE ${CLD}`)
     })
 })
@@ -1399,8 +1401,10 @@ describe('write: opt.pk must be an identifier at construction and is quoted wher
 })
 
 
-describe('write: INSERT data keys with NUL or a lone surrogate give a clear check error (R9, W7)', function() {
+describe('write: INSERT data keys with NUL or a lone surrogate give a clear check error (R9, W7; lone surrogate: shared chkOrmData check first, R17)', function() {
     let keys = [['NUL', 'a\u0000b'], ['lone surrogate', 'a\ud800b']]
+    //NUL 鍵由 genInsert 檢核(invalid data key); 孤立代理鍵自第 66 項起先由 wsemi chkOrmData 於連線之前拒收(固定詞彙, 路徑 <invalid key>), genInsert 之檢核為縱深防禦
+    let keyMsg = (label) => (label === 'NUL' ? /^invalid data key/ : /^invalid data: string contains lone surrogate at \[data\[1\]\.<invalid key>\]$/)
     keys.forEach(([label, k]) => {
         it(`should reject insert and insertBulk with invalid data key (${label}) and write nothing`, async function() {
             await reset()
@@ -1411,7 +1415,7 @@ describe('write: INSERT data keys with NUL or a lone surrogate give a clear chec
             let b = await settle(wo.insertBulk([{ time: 13, name: 'ok' }, { time: 14, [k]: 1 }]))
             for (let r of [a, b]) {
                 assert.strictEqual(r.ok, false)
-                assert.ok(r.e instanceof Error && /^invalid data key/.test(r.e.message), String(r.e)) //原:協定層 insufficient data left in message
+                assert.ok(r.e instanceof Error && keyMsg(label).test(r.e.message), String(r.e)) //原:協定層 insufficient data left in message
                 assert.ok(!r.e.message.includes(k))
             }
             assert.deepStrictEqual(evs, ['insert', 'insertBulk'])
@@ -1425,18 +1429,18 @@ describe('write: INSERT data keys with NUL or a lone surrogate give a clear chec
             wo.on('error', (m) => evs.push(m))
             let r = await wo.save([{ time: 11, name: 'a' }, { time: 12, [k]: 1 }, { time: 13, name: 'c' }])
             assert.deepStrictEqual(r.map((x) => x.ok), [1, 0, 1])
-            assert.ok(/^invalid data key/.test(r[1].err), r[1].err)
+            assert.ok(keyMsg(label).test(r[1].err), r[1].err)
             assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3, 11, 13])
             assert.deepStrictEqual(evs, ['save'])
         })
     })
 
-    it('should roll back the batches already sent when an invalid data key is in a later batch (insert and insertBulk, one transaction)', async function() {
+    it('should roll back the batches already sent when a later batch fails in the database (unknown column; insert and insertBulk, one transaction)', async function() {
         this.timeout(120000)
         await reset()
-        //每筆最多 2 欄 → 單批 32767 筆; 40001 筆分兩批, 壞鍵在第二批
+        //每筆最多 2 欄 → 單批 32767 筆; 40001 筆分兩批, 第二批含不存在之欄(PG 回報; 第 66 項起 NUL 鍵已於連線前拒收, 不再能用來測此項)
         let big = Array.from({ length: 40000 }, (_, i) => ({ time: 1000 + i }))
-        big.push({ 'time': 99999, 'a\u0000b': 1 })
+        big.push({ 'time': 99999, 'zz_nocol': 1 })
         let seen = []
         let orig = pg.Client.prototype.query
         pg.Client.prototype.query = function(cfg, ...rest) {
@@ -1454,19 +1458,29 @@ describe('write: INSERT data keys with NUL or a lone surrogate give a clear chec
         }
         for (let r of [a, b]) {
             assert.strictEqual(r.ok, false)
-            assert.ok(r.e instanceof Error && /^invalid data key/.test(r.e.message), String(r.e))
+            assert.ok(r.e instanceof Error && /zz_nocol/.test(r.e.message), String(r.e))
         }
-        assert.strictEqual(seen.filter((x) => x === 'insert into').length, 2) //兩個呼叫各已送出第一批
+        assert.strictEqual(seen.filter((x) => x === 'insert into').length, 4) //兩個呼叫各送出 2 批(第 2 批失敗)
         assert.strictEqual(seen.filter((x) => x === 'ROLLBACK').length, 2)
         assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3]) //第一批已送出之筆數亦回滾
     })
 
-    it('should ignore such a key when its value is undefined (keys are checked only when written; save no longer references it in ON CONFLICT, W5)', async function() {
+    it('should ignore a NUL key when its value is undefined (genInsert checks keys only when written; save no longer references it in ON CONFLICT, W5)', async function() {
         await reset()
         let r1 = await mk().insert({ 'time': 60, 'name': 'z', 'a\u0000b': undefined })
-        let r2 = await mk().save({ 'time': 61, 'name': 'z', 'a\ud800b': undefined })
+        let r2 = await mk().save({ 'time': 61, 'name': 'z', 'a\u0000b': undefined })
         assert.strictEqual(r1.nInserted, 1)
         assert.strictEqual(r2[0].nInserted, 1)
+    })
+
+    it('should reject a lone-surrogate key even when its value is undefined (the shared chkOrmData check looks at every key name, R17)', async function() {
+        await reset()
+        let r1 = await settle(mk().insert({ 'time': 60, 'name': 'z', 'a\ud800b': undefined }))
+        let r2 = await mk().save({ 'time': 61, 'name': 'z', 'a\ud800b': undefined })
+        assert.strictEqual(r1.ok, false)
+        assert.strictEqual(r1.e.message, 'invalid data: string contains lone surrogate at [data[0].<invalid key>]')
+        assert.deepStrictEqual([r2[0].ok, r2[0].err], [0, 'invalid data: string contains lone surrogate at [data[0].<invalid key>]'])
+        assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3])
     })
 })
 
@@ -1502,7 +1516,9 @@ describe('write: pk is read only from own enumerable properties of the data (R10
             return [a, b]
         })
         assert.deepStrictEqual(r[0].map((x) => [x.ok, x.nDeleted]), [[0, 0], [0, 0]])
-        assert.ok(/^invalid time\[undefined\]/.test(r[0][0].err), r[0][0].err)
+        assert.strictEqual(r[0][0].err, 'invalid id: primary key is missing at [data[0].time]')
+        assert.strictEqual(r[0][1].err, 'invalid id: primary key is missing at [data[1].time]') //逐筆取批次索引
+        assert.strictEqual(r[1][0].err, 'invalid id: primary key is missing at [data[0].time]')
         assert.deepStrictEqual(r[1].map((x) => [x.ok, x.nDeleted]), [[0, 0]])
         assert.deepStrictEqual(evs, ['del', 'del', 'del']) //每筆失敗各發 1 次
         assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3]) //原:time=2 被刪
@@ -1523,7 +1539,7 @@ describe('write: pk is read only from own enumerable properties of the data (R10
         })
         rs.forEach((r) => {
             assert.strictEqual(r.ok, false)
-            assert.ok(r.e instanceof Error && /^invalid data\[1\]\.time\[undefined\]/.test(r.e.message), String(r.e)) //原:UPDATE 作用於 time=2,或 PG 非空違反
+            assert.ok(r.e instanceof Error && r.e.message === 'invalid id: primary key is missing at [data[1].time]', String(r.e)) //原:UPDATE 作用於 time=2,或 PG 非空違反
         })
         assert.deepStrictEqual(evs, ['save', 'save', 'insert', 'insertBulk'])
         assert.deepStrictEqual((await rows('name')).map((x) => x.name), ['aa', 'bb', 'cc']) //整批無寫入(含有效之第 0 筆)
@@ -1536,7 +1552,7 @@ describe('write: pk is read only from own enumerable properties of the data (R10
         assert.deepStrictEqual(d.map((x) => [x.ok, x.nDeleted]), [[0, 0], [0, 0]])
         let s = await settle(wo.save(new Row3(), { autoInsert: false }))
         assert.strictEqual(s.ok, false)
-        assert.ok(/^invalid data\[0\]\.time\[undefined\]/.test(s.e.message), String(s.e))
+        assert.strictEqual(s.e.message, 'invalid id: primary key is missing at [data[0].time]')
         let i = await settle(wo.insert(Object.create({ time: 9 }, { name: { value: 'x', enumerable: true } })))
         assert.strictEqual(i.ok, false)
         assert.deepStrictEqual((await rows('name')).map((x) => x.name), ['aa', 'bb', 'cc'])
@@ -1552,9 +1568,9 @@ describe('write: pk is read only from own enumerable properties of the data (R10
         let d = await wo.del([nonEnum(2), new Row3()])
         assert.deepStrictEqual(d.map((x) => [x.ok, x.nDeleted]), [[0, 0], [0, 0]])
         let s = await settle(wo.save([nonEnum(2), new Row3()]))
-        assert.ok(s.ok === false && /^invalid data\[0\]\.time\[undefined\]/.test(s.e.message), String(s.e))
+        assert.ok(s.ok === false && s.e.message === 'invalid id: primary key is missing at [data[0].time]', String(s.e))
         let i = await settle(wo.insertBulk([nonEnum(7), new Row3()]))
-        assert.ok(i.ok === false && /^invalid data\[0\]\.time\[undefined\]/.test(i.e.message), String(i.e))
+        assert.ok(i.ok === false && i.e.message === 'invalid id: primary key is missing at [data[0].time]', String(i.e))
         assert.deepStrictEqual(evs, ['del', 'del', 'save', 'insertBulk'])
         //單筆且無任何可列舉鍵: 既有之空輸入語意(同 del({})), 不送語句、不發 error、不作用於任何列
         class KeyOnly {
