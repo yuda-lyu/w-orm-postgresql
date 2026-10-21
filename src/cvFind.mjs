@@ -1,8 +1,8 @@
 //條件(find)與排序(order)於送出前的白名單檢核與正規化
-//  find : cvOrmFind(wsemi, 形狀檢核唯一擁有者, 回傳全新null原型複本) -> lowerFind(方言中立IR, 見lowerFind.mjs) ; pg專屬限制(欄名63 bytes、系統欄、綁定參數上限)由dialectPg注入
+//  find : cvOrmFind(wsemi, 形狀檢核唯一擁有者, 回傳全新null原型複本) -> lowerFind(wsemi, 方言中立IR, 契約見wsemi/src/lowerFind.mjs檔頭) ; pg專屬限制(欄名63 bytes、系統欄、綁定參數上限)由dialectPg注入
 //  order: 本模組自行檢核(order不屬系列find白名單, 但鍵與find同文法: 僅識別字), 輸出為有序陣列[{c, dir, nulls}]
 import cvOrmFind from 'wsemi/src/cvOrmFind.mjs'
-import { lowerFind } from './lowerFind.mjs'
+import lowerFind from 'wsemi/src/lowerFind.mjs'
 import { dialectPg } from './buildSql.mjs'
 
 

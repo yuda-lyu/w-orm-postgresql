@@ -3,7 +3,7 @@ import assert from 'assert'
 import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
 import { cvFind, cvOrder, cvKey, cvColumn } from '../src/cvFind.mjs'
 import { buildSelect, buildDelete } from '../src/buildSql.mjs'
-import { eqNode } from '../src/lowerFind.mjs'
+import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
 
 
 //cvFind/cvOrder/cvKey/cvColumn 與 wsemi chkOrmStr(主鍵、表名、資料鍵之良構判定,第 66 項起取代本模組私有之 isCleanStr)之純函數測試(不連線, 不需 docker).
@@ -12,8 +12,8 @@ import { eqNode } from '../src/lowerFind.mjs'
 //  S4 受支援語意不變(預期 SQL 與 values 皆依 SQL 語意手寫, 不取自被測碼)
 //  S5 訊息格式 invalid find: <原因> at [<路徑>]  S7 order  S8 快取鍵  S12 布林 $ne 三值
 //  S13(新) 首尾皆 $ 之字串於所有運算子皆為字面值綁定參數  S14 JSON/轉型鍵 reject(find 與 order)
-//cvFind 回傳方言中立 IR(見 src/lowerFind.mjs 檔頭); SQL 由 buildSelect/buildDelete 產生(表別名 "$t", 欄位不加表限定).
-//IR 契約、maxParams、checkColumn 之單元測試在 unit-lowerfind; verifySql 與 buildSql 精確 SQL 在 unit-sqlbuild; 本檔不重複.
+//cvFind 回傳方言中立 IR(見 wsemi/src/lowerFind.mjs 檔頭); SQL 由 buildSelect/buildDelete 產生(表別名 "$t", 欄位不加表限定).
+//IR 契約、maxParams、checkColumn 之單元測試在 wsemi(lowerFind 契約測試); verifySql 與 buildSql 精確 SQL 在 unit-sqlbuild; 本檔不重複.
 
 
 let S = 'select * from "t" as "$t"'
@@ -1008,13 +1008,13 @@ describe('cvKey: cache keys distinguish values that JSON.stringify would merge (
         assert.strictEqual(k({ tag: { $eq: null } }), k({ tag: null }))
         assert.notStrictEqual(k({ ok: { $ne: true } }), k({ ok: { $ne: false } }))
     })
-    it('should give the same key for selectByPk-style eqNode and the normalized select find', function() {
+    it('should give the same key for selectByPk-style lowerFindEq and the normalized select find', function() {
         let d = new Date(7)
-        assert.strictEqual(cvKey(eqNode('a', 1), []), k({ a: 1 }))
-        assert.strictEqual(cvKey(eqNode('time', d), []), k({ time: new Date(7) }))
-        assert.strictEqual(cvKey(eqNode('time', 'x'), []), k({ $and: [{ time: { $eq: 'x' } }] }))
-        assert.strictEqual(cvKey(eqNode('ok', true), []), k({ ok: { $eq: true } }))
-        assert.notStrictEqual(cvKey(eqNode('a', 1), []), k({ a: '1' }))
+        assert.strictEqual(cvKey(lowerFindEq('a', 1), []), k({ a: 1 }))
+        assert.strictEqual(cvKey(lowerFindEq('time', d), []), k({ time: new Date(7) }))
+        assert.strictEqual(cvKey(lowerFindEq('time', 'x'), []), k({ $and: [{ time: { $eq: 'x' } }] }))
+        assert.strictEqual(cvKey(lowerFindEq('ok', true), []), k({ ok: { $eq: true } }))
+        assert.notStrictEqual(cvKey(lowerFindEq('a', 1), []), k({ a: '1' }))
     })
     it('should distinguish Date from its ISO string and Date values from each other', function() {
         let d = new Date('2020-01-01T00:00:00.000Z')

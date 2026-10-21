@@ -16,7 +16,7 @@ import path from 'path'
 import { createRequire } from 'module'
 import { pathToFileURL } from 'url'
 import cvOrmFind from 'wsemi/src/cvOrmFind.mjs'
-import { lowerFind } from '../../src/lowerFind.mjs'
+import lowerFind from 'wsemi/src/lowerFind.mjs'
 import { buildSelect, buildDelete, dialectPg } from '../../src/buildSql.mjs'
 
 //KEY_NAMES: 高風險屬性名(knex 查詢建構器的選項/內部狀態名)

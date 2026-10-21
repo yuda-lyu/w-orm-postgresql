@@ -20,7 +20,7 @@ import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
 import chkOrmData from 'wsemi/src/chkOrmData.mjs'
 import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
-import { eqNode } from './lowerFind.mjs'
+import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
 import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
 
 
@@ -817,7 +817,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //find, 以建構時設定之主鍵欄位查找, 與insert、save、del、genConflict之認定一致
-        let find = eqNode(pkName, cleanPk(pk))
+        let find = lowerFindEq(pkName, cleanPk(pk))
 
         //cache, 與select共用快取, 因快取鍵值由find與order組成, 故此處等同select(find)之結果
         if (useCache) {
@@ -1328,7 +1328,7 @@ function WOrmPostgresql(opt = {}) {
                 if (true) {
 
                     //mr
-                    let mr = buildSelect(cl, eqNode(pkName, cleanPk(pkv)))
+                    let mr = buildSelect(cl, lowerFindEq(pkName, cleanPk(pkv)))
                     // console.log('mr', mr)
                     // console.log('mr.query', mr.query)
                     // console.log('mr.values', mr.values)
@@ -1742,7 +1742,7 @@ function WOrmPostgresql(opt = {}) {
                 }
 
                 //mr
-                let mr = buildDelete(cl, eqNode(pkName, cleanPk(pkv)))
+                let mr = buildDelete(cl, lowerFindEq(pkName, cleanPk(pkv)))
                 // console.log('mr', mr)
                 // console.log('mr.query', mr.query)
                 // console.log('mr.values', mr.values)

@@ -88,7 +88,7 @@ describe('wellformed(unit): single owner (wsemi chkOrmStr / chkOrmData); no priv
     let files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.mjs'))
 
     it('should not contain isCleanStr, isWellFormed, toWellFormed, a surrogate range or a private lone-surrogate regex in any src file', function() {
-        assert.ok(files.length >= 6)
+        assert.ok(files.length >= 5)
         for (let f of files) {
             let s = stripComments(readSrc(f))
             assert.ok(!/isCleanStr|isWellFormed|toWellFormed|reLone/.test(s), `${f}: private well-formed check`)

@@ -21,7 +21,7 @@ let isScalar = (v) => {
         return true
     }
     if (t === 'number') {
-        return !Number.isNaN(v) //±Infinity 僅可能來自主鍵路徑(eqNode; checkPk 之 isnum 接受, HEAD 行為); find 路徑之有限數值由 cvOrmFind 擔保
+        return !Number.isNaN(v) //±Infinity 僅可能來自主鍵路徑(lowerFindEq; checkPk 之 isnum 接受, HEAD 行為); find 路徑之有限數值由 cvOrmFind 擔保
     }
     if (v !== null && t === 'object') {
         try {
