@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#eqNode">eqNode</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#lowerFind">lowerFind</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WOrmPostgresql.html">WOrmPostgresql</a><ul class='methods'><li data-type='method'><a href="WOrmPostgresql.html#.createTable">createTable</a></li><li data-type='method'><a href="WOrmPostgresql.html#.del">del</a></li><li data-type='method'><a href="WOrmPostgresql.html#.delAll">delAll</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insert">insert</a></li><li data-type='method'><a href="WOrmPostgresql.html#.insertBulk">insertBulk</a></li><li data-type='method'><a href="WOrmPostgresql.html#.save">save</a></li><li data-type='method'><a href="WOrmPostgresql.html#.select">select</a></li><li data-type='method'><a href="WOrmPostgresql.html#.selectByPk">selectByPk</a></li></ul></li></ul><h3>Global</h3><ul><li><a href="global.html#buildDelete">buildDelete</a></li><li><a href="global.html#buildSelect">buildSelect</a></li><li><a href="global.html#cvColumn">cvColumn</a></li><li><a href="global.html#cvColumns">cvColumns</a></li><li><a href="global.html#cvFind">cvFind</a></li><li><a href="global.html#cvKey">cvKey</a></li><li><a href="global.html#cvOrder">cvOrder</a></li><li><a href="global.html#cvTable">cvTable</a></li><li><a href="global.html#dialectPg">dialectPg</a></li><li><a href="global.html#emitOrder">emitOrder</a></li><li><a href="global.html#emitWhere">emitWhere</a></li><li><a href="global.html#genConflict">genConflict</a></li><li><a href="global.html#genInsert">genInsert</a></li><li><a href="global.html#isColumnName">isColumnName</a></li><li><a href="global.html#isSysCol">isSysCol</a></li><li><a href="global.html#quoteKey">quoteKey</a></li><li><a href="global.html#quoteTable">quoteTable</a></li><li><a href="global.html#splitDots">splitDots</a></li></ul>
     
 </nav>
 
@@ -67,7 +67,7 @@ import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
 import chkOrmData from 'wsemi/src/chkOrmData.mjs'
 import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
-import { eqNode } from './lowerFind.mjs'
+import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
 import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
 
 
@@ -864,7 +864,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //find, 以建構時設定之主鍵欄位查找, 與insert、save、del、genConflict之認定一致
-        let find = eqNode(pkName, cleanPk(pk))
+        let find = lowerFindEq(pkName, cleanPk(pk))
 
         //cache, 與select共用快取, 因快取鍵值由find與order組成, 故此處等同select(find)之結果
         if (useCache) {
@@ -1375,7 +1375,7 @@ function WOrmPostgresql(opt = {}) {
                 if (true) {
 
                     //mr
-                    let mr = buildSelect(cl, eqNode(pkName, cleanPk(pkv)))
+                    let mr = buildSelect(cl, lowerFindEq(pkName, cleanPk(pkv)))
                     // console.log('mr', mr)
                     // console.log('mr.query', mr.query)
                     // console.log('mr.values', mr.values)
@@ -1789,7 +1789,7 @@ function WOrmPostgresql(opt = {}) {
                 }
 
                 //mr
-                let mr = buildDelete(cl, eqNode(pkName, cleanPk(pkv)))
+                let mr = buildDelete(cl, lowerFindEq(pkName, cleanPk(pkv)))
                 // console.log('mr', mr)
                 // console.log('mr.query', mr.query)
                 // console.log('mr.values', mr.values)
@@ -2039,7 +2039,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 21 2026 00:07:21 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 21 2026 07:59:56 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
