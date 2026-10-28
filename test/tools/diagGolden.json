@@ -1,0 +1,924 @@
+{
+  "ok": {
+    "out": [
+      {
+        "ok": {
+          "ok": 1
+        }
+      },
+      {
+        "err": "relation \"tdiag_ok\" already exists",
+        "kind": "string"
+      },
+      {
+        "err": "invalid createTable: invalid table name",
+        "kind": "Error"
+      },
+      {
+        "err": "obj[not-an-object] is not an effective object",
+        "kind": "Error"
+      },
+      {
+        "ok": {
+          "n": 0,
+          "nDeleted": 0,
+          "ok": 1
+        }
+      },
+      {
+        "ok": {
+          "n": 2,
+          "nInserted": 2,
+          "ok": 1
+        }
+      },
+      {
+        "ok": {
+          "n": 1,
+          "nInserted": 0,
+          "ok": 1
+        }
+      },
+      {
+        "err": "duplicate key value violates unique constraint \"tdiag_ok_pkey\"",
+        "kind": "DatabaseError",
+        "code": "23505"
+      },
+      {
+        "ok": [
+          {
+            "n": 1,
+            "nInserted": 0,
+            "nModified": 1,
+            "ok": 1
+          },
+          {
+            "n": 1,
+            "nInserted": 1,
+            "nModified": 0,
+            "ok": 1
+          }
+        ]
+      },
+      {
+        "ok": [
+          {
+            "id": "a1",
+            "name": "n1x",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "ok": {
+          "id": "a2",
+          "name": "n2",
+          "value": 2
+        }
+      },
+      {
+        "err": "invalid find: unsupported operator [$foo] at [find.$foo]",
+        "kind": "Error"
+      },
+      {
+        "ok": [
+          {
+            "n": 1,
+            "nDeleted": 1,
+            "ok": 1
+          }
+        ]
+      },
+      {
+        "ok": {
+          "n": 2,
+          "nDeleted": 2,
+          "ok": 1
+        }
+      }
+    ],
+    "evs": [
+      [
+        "done",
+        0
+      ],
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x",
+          "name": "x",
+          "value": 1
+        },
+        "relation \"tdiag_ok\" already exists"
+      ],
+      [
+        "done",
+        1
+      ],
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x"
+        },
+        "invalid createTable: invalid table name"
+      ],
+      [
+        "done",
+        2
+      ],
+      [
+        "error",
+        "createTable",
+        "not-an-object",
+        "obj[not-an-object] is not an effective object"
+      ],
+      [
+        "done",
+        3
+      ],
+      [
+        "change",
+        "delAll",
+        null,
+        {
+          "n": 0,
+          "nDeleted": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        4
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "n1",
+            "value": 1
+          },
+          {
+            "id": "a2",
+            "name": "n2",
+            "value": 2
+          }
+        ],
+        {
+          "n": 2,
+          "nInserted": 2,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        5
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "dup"
+          }
+        ],
+        {
+          "n": 1,
+          "nInserted": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        6
+      ],
+      [
+        "error",
+        "insertBulk",
+        [
+          {
+            "id": "a1",
+            "name": "dup"
+          }
+        ],
+        "duplicate key value violates unique constraint \"tdiag_ok_pkey\""
+      ],
+      [
+        "done",
+        7
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a3",
+            "name": "n3"
+          }
+        ],
+        {
+          "n": 1,
+          "nInserted": 1,
+          "nModified": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "change",
+        "save",
+        [
+          {
+            "id": "a1",
+            "name": "n1x"
+          },
+          {
+            "id": "a3",
+            "name": "n3"
+          }
+        ],
+        [
+          {
+            "n": 1,
+            "nInserted": 0,
+            "nModified": 1,
+            "ok": 1
+          },
+          {
+            "n": 1,
+            "nInserted": 1,
+            "nModified": 0,
+            "ok": 1
+          }
+        ]
+      ],
+      [
+        "done",
+        8
+      ],
+      [
+        "done",
+        9
+      ],
+      [
+        "done",
+        10
+      ],
+      [
+        "error",
+        "select",
+        null,
+        "invalid find: unsupported operator [$foo] at [find.$foo]"
+      ],
+      [
+        "done",
+        11
+      ],
+      [
+        "change",
+        "del",
+        [
+          {
+            "id": "a2"
+          }
+        ],
+        [
+          {
+            "n": 1,
+            "nDeleted": 1,
+            "ok": 1
+          }
+        ]
+      ],
+      [
+        "done",
+        12
+      ],
+      [
+        "change",
+        "delAll",
+        null,
+        {
+          "n": 2,
+          "nDeleted": 2,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        13
+      ]
+    ]
+  },
+  "bad": {
+    "out": [
+      {
+        "ok": {
+          "ok": 1
+        }
+      },
+      {
+        "err": "relation \"tdiag_bad\" already exists",
+        "kind": "string"
+      },
+      {
+        "err": "invalid createTable: invalid table name",
+        "kind": "Error"
+      },
+      {
+        "err": "obj[not-an-object] is not an effective object",
+        "kind": "Error"
+      },
+      {
+        "ok": {
+          "n": 0,
+          "nDeleted": 0,
+          "ok": 1
+        }
+      },
+      {
+        "ok": {
+          "n": 2,
+          "nInserted": 2,
+          "ok": 1
+        }
+      },
+      {
+        "ok": {
+          "n": 1,
+          "nInserted": 0,
+          "ok": 1
+        }
+      },
+      {
+        "err": "duplicate key value violates unique constraint \"tdiag_bad_pkey\"",
+        "kind": "DatabaseError",
+        "code": "23505"
+      },
+      {
+        "ok": [
+          {
+            "n": 1,
+            "nInserted": 0,
+            "nModified": 1,
+            "ok": 1
+          },
+          {
+            "n": 1,
+            "nInserted": 1,
+            "nModified": 0,
+            "ok": 1
+          }
+        ]
+      },
+      {
+        "ok": [
+          {
+            "id": "a1",
+            "name": "n1x",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "ok": {
+          "id": "a2",
+          "name": "n2",
+          "value": 2
+        }
+      },
+      {
+        "err": "invalid find: unsupported operator [$foo] at [find.$foo]",
+        "kind": "Error"
+      },
+      {
+        "ok": [
+          {
+            "n": 1,
+            "nDeleted": 1,
+            "ok": 1
+          }
+        ]
+      },
+      {
+        "ok": {
+          "n": 2,
+          "nDeleted": 2,
+          "ok": 1
+        }
+      }
+    ],
+    "evs": [
+      [
+        "done",
+        0
+      ],
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x",
+          "name": "x",
+          "value": 1
+        },
+        "relation \"tdiag_bad\" already exists"
+      ],
+      [
+        "done",
+        1
+      ],
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x"
+        },
+        "invalid createTable: invalid table name"
+      ],
+      [
+        "done",
+        2
+      ],
+      [
+        "error",
+        "createTable",
+        "not-an-object",
+        "obj[not-an-object] is not an effective object"
+      ],
+      [
+        "done",
+        3
+      ],
+      [
+        "change",
+        "delAll",
+        null,
+        {
+          "n": 0,
+          "nDeleted": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        4
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "n1",
+            "value": 1
+          },
+          {
+            "id": "a2",
+            "name": "n2",
+            "value": 2
+          }
+        ],
+        {
+          "n": 2,
+          "nInserted": 2,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        5
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "dup"
+          }
+        ],
+        {
+          "n": 1,
+          "nInserted": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        6
+      ],
+      [
+        "error",
+        "insertBulk",
+        [
+          {
+            "id": "a1",
+            "name": "dup"
+          }
+        ],
+        "duplicate key value violates unique constraint \"tdiag_bad_pkey\""
+      ],
+      [
+        "done",
+        7
+      ],
+      [
+        "change",
+        "insert",
+        [
+          {
+            "id": "a3",
+            "name": "n3"
+          }
+        ],
+        {
+          "n": 1,
+          "nInserted": 1,
+          "nModified": 0,
+          "ok": 1
+        }
+      ],
+      [
+        "change",
+        "save",
+        [
+          {
+            "id": "a1",
+            "name": "n1x"
+          },
+          {
+            "id": "a3",
+            "name": "n3"
+          }
+        ],
+        [
+          {
+            "n": 1,
+            "nInserted": 0,
+            "nModified": 1,
+            "ok": 1
+          },
+          {
+            "n": 1,
+            "nInserted": 1,
+            "nModified": 0,
+            "ok": 1
+          }
+        ]
+      ],
+      [
+        "done",
+        8
+      ],
+      [
+        "done",
+        9
+      ],
+      [
+        "done",
+        10
+      ],
+      [
+        "error",
+        "select",
+        null,
+        "invalid find: unsupported operator [$foo] at [find.$foo]"
+      ],
+      [
+        "done",
+        11
+      ],
+      [
+        "change",
+        "del",
+        [
+          {
+            "id": "a2"
+          }
+        ],
+        [
+          {
+            "n": 1,
+            "nDeleted": 1,
+            "ok": 1
+          }
+        ]
+      ],
+      [
+        "done",
+        12
+      ],
+      [
+        "change",
+        "delAll",
+        null,
+        {
+          "n": 2,
+          "nDeleted": 2,
+          "ok": 1
+        }
+      ],
+      [
+        "done",
+        13
+      ]
+    ]
+  },
+  "conn": {
+    "out": [
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      }
+    ],
+    "evs": [
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x"
+        },
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        0
+      ],
+      [
+        "error",
+        "select",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        1
+      ],
+      [
+        "error",
+        "selectByPk",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        2
+      ],
+      [
+        "error",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        3
+      ],
+      [
+        "error",
+        "insertBulk",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        4
+      ],
+      [
+        "error",
+        "save",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        5
+      ],
+      [
+        "error",
+        "del",
+        [
+          {
+            "id": "a1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        6
+      ],
+      [
+        "error",
+        "delAll",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        7
+      ]
+    ]
+  },
+  "connBad": {
+    "out": [
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      },
+      {
+        "err": "connect ECONNREFUSED 127.0.0.1:1",
+        "kind": "Error",
+        "code": "ECONNREFUSED"
+      }
+    ],
+    "evs": [
+      [
+        "error",
+        "createTable",
+        {
+          "id": "x"
+        },
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        0
+      ],
+      [
+        "error",
+        "select",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        1
+      ],
+      [
+        "error",
+        "selectByPk",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        2
+      ],
+      [
+        "error",
+        "insert",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        3
+      ],
+      [
+        "error",
+        "insertBulk",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        4
+      ],
+      [
+        "error",
+        "save",
+        [
+          {
+            "id": "a1",
+            "name": "n1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        5
+      ],
+      [
+        "error",
+        "del",
+        [
+          {
+            "id": "a1"
+          }
+        ],
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        6
+      ],
+      [
+        "error",
+        "delAll",
+        null,
+        "connect ECONNREFUSED 127.0.0.1:1"
+      ],
+      [
+        "done",
+        7
+      ]
+    ]
+  }
+}

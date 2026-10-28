@@ -22,6 +22,7 @@ import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
 import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
 import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
+import { getOptLog, getSecretsOfUrl, getDiag, getBriefErr } from './getDiag.mjs'
 
 
 //pgBools, PostgreSQL boolean輸入字串之對照(去空白、不分大小寫; PG接受唯一前綴), 供insert之returnList比對輸入主鍵與BOOLEAN欄回傳值; null原型避免繼承名稱
@@ -47,16 +48,22 @@ let pgBools = Object.create(null)
  * 1. 主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: <原因> at [data[<k>].<主鍵名>])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。
  * 2. 寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: <原因> at [data[<k>].<路徑>])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[<k>].<invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。
  * 3. 建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.<名>: <原因>')。
+ * 診斷輸出(w-orm系列規則，單一出口src/getDiag.mjs)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
+ * 預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
+ * opt.logDetail為true時還原為舊版輸出(輸出訂閱函數拋出之值經遮罩後的副本；內建錯誤類別[Error、TypeError等]之輸出與舊版逐字相同，使用端自訂類別、Map/Set、二進位、函數與存取器等以純物件或標記字串表示)，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console。
+ * 連線字串與帳密於任何輸出(預設、logDetail、funLog之detail)一律以***遮罩。各操作之resolve/reject內容、事件payload與時機不受影響(error事件與reject之錯誤訊息仍為後端原文，由呼叫端自行處置)。
  * 檢核作用於cloneDeep後之複本、先於連線與任何寫入(createTable之表名、主鍵名與樣本物件之鍵亦於連線之前檢核)；資料之走訪檢核在另一份獨立複本上進行(走訪會呼叫存取器，其副作用不得改動其後實際寫入者)，事件回呼收到的數據亦為獨立複本，不得影響待處理之筆。
  * save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事件不因資料庫是否可連線而異)，批次中仍有待處理之筆時連線失敗則整批reject。本套件無autoGenPk，檢核不隨任何設定改變。既有資料不遷移(PostgreSQL以UTF-8儲存，過去寫入孤立代理字元者已被改寫為U+FFFD，無從還原，見README之檢出與清除方式)。
  *
  * @class
  * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {String} [opt.url='postgresql://127.0.0.1:5432'] 輸入連接資料庫字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.url: ...'))，預設'postgresql://127.0.0.1:5432'
+ * @param {String} [opt.url='postgresql://user:password@127.0.0.1:5432'] 輸入連接資料庫字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.url: ...'))，密碼含特殊字元(@ / ? # 等)時須百分比編碼，預設'postgresql://user:password@127.0.0.1:5432'
  * @param {String} [opt.db='worm'] 輸入使用資料庫名稱字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.db: ...'))，預設'worm'
  * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.cl: ...')，否則UTF-8送出時會變為U+FFFD而誤中他表)，預設'test'
  * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)且不得為系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)，不合者建構拋出Error('invalid opt.pk')，預設'time'
  * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
+ * @param {Boolean} [opt.logDetail=false] 輸入診斷輸出是否還原為含資料值與錯誤原文之完整細節(連線字串與帳密仍以***遮罩)，須為true才生效，其餘型別忽略並用預設，預設false(只輸出標籤與不含個資之摘要)
+ * @param {Function} [opt.funLog=null] 輸入診斷輸出接收函數funLog(label, safe, detail)，須為函數才生效，其餘型別忽略並用預設；給予時診斷輸出只交給它而不寫console，label為固定標籤、safe為不含個資之摘要、detail為完整細節(連線字串與帳密已以***遮罩)，其回傳之promise若reject亦被吞下，預設null
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
  */
 function WOrmPostgresql(opt = {}) {
@@ -332,6 +339,11 @@ function WOrmPostgresql(opt = {}) {
     let connectionString = `${url}/${db}`
     // console.log('connectionString', connectionString)
 
+    //diag, 診斷輸出之單一出口(R18): src內所有console輸出皆經此, 除getDiag.mjs外不得直接呼叫console;
+    //預設只輸出固定標籤與不含個資之摘要, opt.logDetail還原細節, opt.funLog取代console; 連線字串與帳密(opt.url及其解析所得之帳號與密碼)於任何輸出皆遮罩;
+    //其後各路徑共用此快照, 不再讀取使用端的opt
+    let diag = getDiag(getOptLog(opt), getSecretsOfUrl(url, connectionString))
+
     //ee, 採eventemitter3而不採Node內建之events.EventEmitter,
     //因後者於'error'無監聽者時會將錯誤直接拋出, 將使操作行為隨呼叫端是否註冊監聽而異
     let ee = evem()
@@ -357,7 +369,7 @@ function WOrmPostgresql(opt = {}) {
             ee.emit('change', mode, data, res)
         }
         catch (errEmit) {
-            console.log(errEmit)
+            diag('change handler threw', { mode, ...getBriefErr(errEmit) }, () => errEmit, true)
         }
     }
 
@@ -368,7 +380,7 @@ function WOrmPostgresql(opt = {}) {
             ee.emit('error', mode, data, getErrMsg(err))
         }
         catch (errEmit) {
-            console.log(errEmit)
+            diag('error handler threw', { mode, ...getBriefErr(errEmit) }, () => errEmit, true)
         }
     }
 
@@ -547,7 +559,7 @@ function WOrmPostgresql(opt = {}) {
      * 註: pk未給時採建構時之opt.pk。因insert與save倚賴主鍵之唯一約束達成原子性，
      * 若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值。
      * 表名、主鍵名與數據物件之鍵於送出任何語句之前先檢核：鍵與pk須為識別字，表名須為一般名稱、schema.table或完整雙引號名稱，
-     * 不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值)；表名與欄名一律加雙引號，故區分大小寫
+     * 不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值；數據物件本身不是有效物件者例外，既有訊息為obj[<該值>] is not an effective object)；表名與欄名一律加雙引號，故區分大小寫
      * (如{userName:1}建出欄userName，與insert、save、select所用之引用一致，不折為小寫)。DDL以extended協定送出，不可堆疊第二語句。
      *
      * @memberOf WOrmPostgresql
