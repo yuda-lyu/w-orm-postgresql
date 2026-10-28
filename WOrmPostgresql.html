@@ -85,6 +85,10 @@
 <li>主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: &lt;原因&gt; at [data[<k>].&lt;主鍵名&gt;])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。</li>
 <li>寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: &lt;原因&gt; at [data[<k>].&lt;路徑&gt;])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[<k>].<invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。</li>
 <li>建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.&lt;名&gt;: &lt;原因&gt;')。
+診斷輸出(w-orm系列規則，單一出口src/getDiag.mjs)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
+預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
+opt.logDetail為true時還原為舊版輸出(輸出訂閱函數拋出之值經遮罩後的副本；內建錯誤類別[Error、TypeError等]之輸出與舊版逐字相同，使用端自訂類別、Map/Set、二進位、函數與存取器等以純物件或標記字串表示)，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console。
+連線字串與帳密於任何輸出(預設、logDetail、funLog之detail)一律以***遮罩。各操作之resolve/reject內容、事件payload與時機不受影響(error事件與reject之錯誤訊息仍為後端原文，由呼叫端自行處置)。
 檢核作用於cloneDeep後之複本、先於連線與任何寫入(createTable之表名、主鍵名與樣本物件之鍵亦於連線之前檢核)；資料之走訪檢核在另一份獨立複本上進行(走訪會呼叫存取器，其副作用不得改動其後實際寫入者)，事件回呼收到的數據亦為獨立複本，不得影響待處理之筆。
 save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事件不因資料庫是否可連線而異)，批次中仍有待處理之筆時連線失敗則整批reject。本套件無autoGenPk，檢核不隨任何設定改變。既有資料不遷移(PostgreSQL以UTF-8儲存，過去寫入孤立代理字元者已被改寫為U+FFFD，無從還原，見README之檢出與清除方式)。</li>
 </ol></li></ul></dd>
@@ -93,7 +97,7 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line62">line 62</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line69">line 69</a>
     </li></ul></dd>
     
 
@@ -260,12 +264,12 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
             
                 <td class="default">
                 
-                    <code>'postgresql://127.0.0.1:5432'</code>
+                    <code>'postgresql://user:password@127.0.0.1:5432'</code>
                 
                 </td>
             
 
-            <td class="description last"><p>輸入連接資料庫字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.url: ...'))，預設'postgresql://127.0.0.1:5432'</p></td>
+            <td class="description last"><p>輸入連接資料庫字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.url: ...'))，密碼含特殊字元(@ / ? # 等)時須百分比編碼，預設'postgresql://user:password@127.0.0.1:5432'</p></td>
         </tr>
 
     
@@ -429,6 +433,86 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
         </tr>
 
     
+
+        <tr>
+            
+                <td class="name"><code>logDetail</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入診斷輸出是否還原為含資料值與錯誤原文之完整細節(連線字串與帳密仍以***遮罩)，須為true才生效，其餘型別忽略並用預設，預設false(只輸出標籤與不含個資之摘要)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>funLog</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">function</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入診斷輸出接收函數funLog(label, safe, detail)，須為函數才生效，其餘型別忽略並用預設；給予時診斷輸出只交給它而不寫console，label為固定標籤、safe為不含個資之摘要、detail為完整細節(連線字串與帳密已以***遮罩)，其回傳之promise若reject亦被吞下，預設null</p></td>
+        </tr>
+
+    
     </tbody>
 </table>
 
@@ -520,14 +604,14 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
 註: pk未給時採建構時之opt.pk。因insert與save倚賴主鍵之唯一約束達成原子性，
 若給予與opt.pk不同之欄位，將建出其餘函數無法正確操作之資料表，故一般應留空或給予相同值。
 表名、主鍵名與數據物件之鍵於送出任何語句之前先檢核：鍵與pk須為識別字，表名須為一般名稱、schema.table或完整雙引號名稱，
-不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值)；表名與欄名一律加雙引號，故區分大小寫
+不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值；數據物件本身不是有效物件者例外，既有訊息為obj[&lt;該值&gt;] is not an effective object)；表名與欄名一律加雙引號，故區分大小寫
 (如{userName:1}建出欄userName，與insert、save、select所用之引用一致，不折為小寫)。DDL以extended協定送出，不可堆疊第二語句。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line559">line 559</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line571">line 571</a>
     </li></ul></dd>
     
 
@@ -784,7 +868,7 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1656">line 1656</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1668">line 1668</a>
     </li></ul></dd>
     
 
@@ -966,7 +1050,7 @@ null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $r
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1844">line 1844</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1856">line 1856</a>
     </li></ul></dd>
     
 
@@ -1154,7 +1238,7 @@ INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSON
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line947">line 947</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line959">line 959</a>
     </li></ul></dd>
     
 
@@ -1449,7 +1533,7 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1088">line 1088</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1100">line 1100</a>
     </li></ul></dd>
     
 
@@ -1623,7 +1707,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1220">line 1220</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1232">line 1232</a>
     </li></ul></dd>
     
 
@@ -1930,7 +2014,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line688">line 688</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line700">line 700</a>
     </li></ul></dd>
     
 
@@ -2151,7 +2235,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line809">line 809</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line821">line 821</a>
     </li></ul></dd>
     
 
@@ -2314,7 +2398,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 21 2026 07:59:56 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Oct 28 2026 09:42:08 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
