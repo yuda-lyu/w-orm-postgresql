@@ -38,9 +38,11 @@
   - S23 錯誤訊息固定詞彙、不回顯值:`invalid id: <原因> at [data[<k>].<主鍵名>]`、`invalid data: <原因> at [data[<k>].<路徑>]`、`invalid opt.<名>: <原因>`;原因取 wsemi(`string contains lone surrogate`、`string contains NUL`、`not a string`)加本套件主鍵專屬之 `primary key is missing`、`string is empty`、`unsupported primary key value`;k 為最小索引之不合格筆(同一筆主鍵先於資料,同一物件鍵名先於值).
   - S24 本套件無 `autoGenPk`(主鍵從不補值),檢核不隨任何設定改變(案例表以 `autoGenPk:false` 再跑一輪證明).
   - S25 既有資料不遷移(D8);PostgreSQL 以 UTF-8 儲存,過去寫入之孤立代理已被改寫為 U+FFFD,無從還原(README 載明檢出與清除).排序規則弱相等(mssql/Jet)與本套件無關.
-  - S26 診斷輸出預設只含固定標籤與不含個資之摘要(資料值、id、使用者識別、錯誤原文、連線憑證皆不出現),所有輸出經單一出口 `src/getDiag.mjs`(R18).
-  - S27 `opt.logDetail`(`true` 才生效,還原舊式輸出)與 `opt.funLog(label, safe, detail)`(取代 console)之語意比照 w-serv-orm;型別錯誤者忽略並用預設;選項於建構時成快照(R18).
-  - S28 連線字串與帳密於任何輸出管道一律以 `***` 遮罩;各操作之 resolve/reject、事件 payload 與時機不變(以修改前 HEAD 產生之 `diagGolden.json` 逐項比對,R18).
+  - S26 診斷輸出預設只含固定標籤與不含個資之摘要(資料值、id、使用者識別、錯誤原文、連線憑證皆不出現),所有輸出經 wsemi 之 `getDiag`(R18;第 161 項起,原 `src/getDiag.mjs` 已刪).
+  - S27 `opt.logDetail`(`true` 才生效,輸出 `console.log(label, 遮罩後細節)`)與 `opt.funLog(label, safe, detail)`(取代 console)之語意比照 w-serv-orm;型別錯誤者忽略並用預設;選項於建構時成快照(R18).
+  - S28 連線字串與帳密於任何診斷輸出一律以 `***` 遮罩;無憑證之值其 resolve/reject、事件 payload 與時機不變(以修改前 HEAD 產生之 `diagGolden.json` 逐項比對,R18).
+  - S29 對外錯誤值(reject、`error` 事件之訊息、`save`/`del` 逐筆 `err`)不含連線憑證:外來值經 `diag.err`,含憑證者為遮罩副本、無憑證者原物件;本套件自身之固定詞彙錯誤不遮(R18;依 dspec〈診斷輸出與遮罩〉D3).
+  - S30 驅動呼叫經單一接縫(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),接縫外不得直接呼叫 `new PgClient`、`client.connect|query|end`(R18).
 
 ## 〔條件(find)之支援範圍〕
 
@@ -256,51 +258,60 @@
   8. 全批失敗免連線:`save`/`del` 在 DB 不可連線時對全無效批次也回逐筆結果(原先為整批連線錯誤 reject).
   9. `chkOrmData` 之走訪(全系列同一規則)含本套件不寫入之繼承可列舉屬性,其含孤立代理者誤拒整筆(共用契約 `type:inherit` 要求,外審 minimax #3);`save` 失敗筆 `n:1`、`del` 失敗筆 `n:0`(各自既有形狀,#7);欄名文法錯誤訊息(`unsupported column name [<名>]`,find/order/save autoInsert:false)仍帶出清除後之欄名,與 `cvOrmFind` 一致(#6).
 
-## R18 診斷輸出單一出口(第 153 項;S26–S28)
+## R18 診斷輸出與對外錯誤值遮罩(第 153 項、第 161 項;S26–S30;依 dspec〈診斷輸出與遮罩〉與 wsemi R-DIAG-01)
 
-- 依據:任務 `C:\opensrcOper\dnow\20261028054319`(session pg-run01);參考實作 w-serv-orm 1.1.20 `src/getDiag.mjs`、w-orm-reladb 1.1.16 `src/getDiag.mjs`(遮罩漏洞清單見其 `reladb-run01/02-修正報告.md`);主控定一致介面:選項 `logDetail`、`funLog` 之名稱與語意比照 w-serv-orm,各套件自行實作(不抽到 wsemi).
-- 規格句:
-  - S26 預設只輸出固定標籤與不含個資之摘要:不含資料值、id、使用者識別、訂閱函數拋出之錯誤原文、後端錯誤原文、連線憑證.
-  - S27 `opt.logDetail`(布林,`true` 才生效)還原舊式輸出(格式與舊版 `console.log(err)` 一致);`opt.funLog(label, safe, detail)`(函數才生效)取代 console 收完整細節;型別錯誤者忽略並用預設(同 `useCache`),不拋錯;選項於建構時讀取一次成快照.
-  - S28 連線字串與帳密於任何輸出管道(預設摘要、logDetail、funLog 之 detail)一律以 `***` 遮罩;各操作之 resolve/reject、事件 payload 與時機不變(只動診斷輸出).
+- **本節為摘要**:遮罩、摘要、出口之規則與形態語料由 wsemi 單一擁有——跨套件規格 `C:\opensrcOper\dspec\診斷輸出與遮罩.md`(D1–D5、Q1–Q4、P1–P9、§5 已知限制)、wsemi 帳本 `sgud/rule/rulebook_diag.md` R-DIAG-01(來源 repo `C:\opensrc\開源-JS-002-3-wsemi\wsemi`)、共用語料 `wsemi/src/_diagCases.mjs`.**本套件不得自寫等價實作**(D1);2026-10-29 第 161 項遷移,第 153 項(pg-run01)之自製 `src/getDiag.mjs` 已刪.任務 `C:\opensrcOper\dnow\20261029002013`(session mig-pg),報告 `agent-out\mig-pg-修正報告.md`;設計 `agent-out\diag-run01-設計.md` §4.1、§6.
+- 規格句(S26–S28 自第 153 項沿用,S29–S30 為第 161 項新增):
+  - S26 診斷輸出預設只含固定標籤與不含個資之摘要(資料值、id、使用者識別、錯誤原文、連線憑證皆不出現).
+  - S27 `opt.logDetail`(`true` 才生效)與 `opt.funLog(label, safe, detail)`(取代 console)之語意比照 w-serv-orm;型別錯誤者忽略並用預設;選項於建構時成快照.`logDetail` 輸出為 `console.log(label, 遮罩後細節)`(第 161 項起;原為無標籤之 bare 輸出).
+  - S28 連線字串與帳密於任何診斷輸出一律以 `***` 遮罩.
+  - S29 對外錯誤值不含連線憑證(D3):reject 值、`'error'` 事件之訊息引數、`save`/`del` 逐筆結果之 `err`,凡含外來值(驅動與後端之錯誤、使用端存取器或 Proxy 陷阱拋出之值)者經 `diag.err`:含憑證者為遮罩副本(同類別,`code` 等非秘密欄位保留),無憑證者為原物件;只遮憑證,不遮單獨帳號與資料值(Q3、P1).
+  - S30 本套件自身以固定詞彙組成之錯誤(`invalid …`、`can not select by …`)不經遮罩(對固定字串挖空會讓缺口反推短密碼;D3).
+- **本套件之宣告**(全在 `WOrmPostgresql.mjs` 之 `getDiag(opt, cfg)`):`secrets: getDiagSecrets({ urls: [url, connectionString] })`(秘密來源為 `opt.url` 與組成之連線字串,帳密由其導出)、`codes: ['sqlstate']`、`types: ['DatabaseError']`、`safeKeys: ['mode']`;`diag(` 恰 2 站,label 為固定二詞(`change handler threw`、`error handler threw`),safe 恆為 `{ mode, ...diag.brief(e) }`;level 不傳(預設 stdout `console.log`,兩站與修改前一致,**無 stderr 站**);`opt` 原樣交 `getDiag` 讀取(`bare`、`method`、`isErr` 舊參數無).
 - 規則:
-  1. **單一出口**:`src/` 內除 `getDiag.mjs` 外不得有 `console.*`、`process.stdout|stderr|emitWarning`(`unit-diaglog` 掃描,註解與區塊註解不計);`getDiag.mjs` 內 `console` 恰 4 處(預設、logDetail 各一,其兜底各一).不用 Node 內建模組(dist 由 rollup 打包,`gDistRollup.mjs` 之 external 只列 events、pg、knex).
-  2. **站點全集**(修改前 HEAD;盤點指令見下):
-     | 站點 | 內容 | 處置 |
-     |---|---|---|
-     | `WOrmPostgresql.mjs:360`(`emitChange` catch) | `console.log(errEmit)`:change 訂閱函數拋出之錯誤原物件 | 已改:`diag('change handler threw', { mode, ...getBriefErr(e) }, () => e, true)` |
-     | `WOrmPostgresql.mjs:371`(`emitError` catch) | 同上,error 訂閱函數 | 已改:`diag('error handler threw', ...)` |
-     | 已註解之 `// console.log(...)` | 40 行,全在 `WOrmPostgresql.mjs` | 不計 |
-     | `pg-connection-string/index.js:219-231` | `process.emitWarning`(固定文字,sslmode 三擇一),每行程一次,僅網址帶 `sslmode=` 時 | 可留(不含個資) |
-     | `pg-protocol/dist/serializer.js:47-49`、`pg/lib/native/query.js:132-134` | `console.error` 具名查詢名稱 > 63 字元 | 可留(不可達:`pgq` 不帶 `name`;本套件不用 pg-native) |
-     | `pg-protocol/dist/b.js:12` | 效能量測腳本 | 可留(無人載入) |
-     | `knex/lib/logger.js:42` 與各 `logger.warn` | 固定文字警告 | 可留(僅用 `queryBuilder`、`raw`、`whereIn/whereNotIn/whereNull/orWhere...`,不用 `limit/offset/whereNot/increment/無表名呼叫`) |
-     | knex `debug`(環境變數 `DEBUG=knex:*`) | 含綁定值之 SQL 到 stderr | 可留(操作者自開;README 警示) |
-  3. **預設輸出**:`console.log(label, safe)`;`safe = { mode, errType, errCode? }`:`mode` 為本套件固定操作別;`errType` 僅白名單(`ERR_TYPES`:Error、TypeError、RangeError、SyntaxError、ReferenceError、EvalError、URIError、AggregateError、DatabaseError),Error 實例之其他類別名稱一律 `Error`(自訂類別名稱、實例自有 `constructor` 屬性可夾帶帳號/員編,外審 C-1);字串列 `string`;其餘列 `typeof`/`null`/`object`;`errCode` 僅放行**明確常數集合**:`SYS_CODES`(Node/libuv 系統錯誤名稱)、`NODE_CODES`(`ERR_INVALID_URL` 等 Node/TLS 常見代碼)、`SQLSTATES`(PostgreSQL 附錄 A 全表約 250 碼);樣式(`ERR_*`、5 碼大寫)與數值一律不放行(會放行 `ERR_USER_ALICE_9901`、`P0123`、員編郵遞區號,外審 C-2).`getBriefErr` 全程不執行 getter(`ownData` 只讀自有資料屬性),結果以物件字面值一次建成(不逐鍵賦值:`Object.prototype` 有同名唯讀屬性/setter 時賦值會拋錯,外審 D-1).**摘要不做子字串遮罩**(`maskSafe` 已刪):對公開常數挖空,缺口會洩漏短密碼(`ert` → `ins***`,外審 B-7);摘要之值只可能來自操作別、白名單類別名與白名單代碼.已知限制:判斷 `instanceof Error`/原型時 Proxy 陷阱可能被執行(不用 Node 內建模組,無法預先辨識 Proxy).
-  4. **選項**:`getOptLog(opt)` 回傳固定快照 `{ logDetail, funLog }`;各選項分別讀取並各自 try(單一 getter 拋錯只丟該選項);`opt` 為 null/非物件亦不拋錯.`funLog` 存在時 console 不寫;其回傳之 promise/thenable 之 reject 一律吞下(`swallow`);`funLog`、`getDetail`、console 之拋錯皆吞下,輸出不得使操作拋錯.`logDetail` 為 bare 輸出(只輸出錯誤、無標籤,同舊版).
-  5. **憑證遮罩**:`getSecretsOfUrl(url, connectionString)` 之來源:`opt.url`、`${url}/${db}`;`getCred`(權限段〔第一個 `/?#` 之前〕取最後一個 `@` 之前為帳密,帳號/密碼以第一個 `:` 分;另補「整串取至最後一個 `@`」寬鬆候選;**畸形網址**〔權限段之後仍有 `@`,密碼含未編碼之 `/?#`,pg 會把片段當主機名/資料庫名而見於後端訊息〕再補以 `@/:?#` 分段之各片段〔≥3 字元〕;查詢參數 `?user=&password=` 之原樣與解碼〔`+` 為空白〕兩形式,外審 A-3、B-4);`getUrlParts`(以 pg 相同方式 `new URL(cs, 'postgres://base')` 解析〔失敗時以假主機重試〕所得 `username`/`password`);`帳號:密碼`.每個秘密展開 `variantsOf`:原樣與 `decodeURIComponent` 後,各取原樣、單引號加倍、JSON 跳脫、`encodeURIComponent`、RFC 3986 嚴格編碼〔另編 `! ' ( ) *`〕及其小寫十六進位(外審 B-5);帳號單獨出現至少 3 字元才遮罩;長者在前.`maskText`:全部命中區間在原字串上一次找出、**相交者合併後一次取代**(逐一取代時較長者會吃掉與它首尾重疊之較短者前綴,外審 B-6);另 `scheme://…@` 兜底(`RE_URL_CRED`,盡力而為:密碼含 `/`、引號、空白時不匹配).`cpMask`:字串值、屬性鍵(**陣列之非索引鍵與 Symbol 鍵亦遮罩**,B-2)、Symbol 值與描述(B-1)、包裝物件〔`new String(憑證)` 等以內建 `valueOf.call` 解為原始值再遮罩,B-3〕、`message`、`stack`、`cause`、巢狀皆遮罩;至少 4 位之純數字密碼,同值 number/bigint/包裝物件亦遮罩;不執行 getter/方法/建構子(存取器以 `[Getter/Setter]` 標記;二進位長度以內建 `byteLength` getter 取,B-8);**`stack` 僅在讀取不會執行使用端程式時才取**(`stackReadable`:`Error.prepareStackTrace` 仍為載入時之 Node 內建預設、錯誤及其原型鏈上之 `name`/`message` 非存取器;V8 於首次讀 `stack` 才格式化並讀 name/message、呼叫 prepareStackTrace,B-8),否則標 `[Getter/Setter]`;副本不沿用使用端原型(內建錯誤類別沿用同類別之內建原型,使 `util.inspect` 輸出與原物件一致),不改動原物件;循環、過深(6)、過大(2000)有界.
-  6. **回傳契約不變**:`test/tools/diagScenario.mjs` 情境(createTable 成功/已存在/表名不合/樣本非物件、delAll、insert 含重複、insertBulk 重複、save、select、selectByPk、find 不合、del;不可連線之 8 個操作;各含一般與壞訂閱函數兩版)之結果〔`{ ok }` 或 `{ err, kind, code }`:`kind` 為 reject 值之型別〔Error 物件為建構子名稱,字串為 `string`〕,`code` 為字串型錯誤代碼〕、事件 payload、事件與結算先後(`['done', i]` 標記),逐項等於 `test/tools/diagGolden.json`(由修改前 HEAD 之 `src` 以 `tmp/pg-run01/gen-golden.mjs ./head/src/WOrmPostgresql.mjs` 產生);五種選項組合(預設、logDetail、funLog、funLog 拋錯、兩者並給)皆同.
-  7. **建構函式與連線設定之訊息不回顯連線網址或帳密**:`invalid opt.url|db|cl: <固定原因>`(wsemi `chkOrmStr`)、`invalid opt.pk: …` 皆不回顯值;pg 對不合格網址之 `Invalid URL` 已把 `input` 換成 `*****REDACTED*****`;連線失敗訊息僅含位址與主機名.故**未新增 `maskUrl`**(無回顯站點,新增即死碼),以測試鎖住現況(pg 升版若改變行為即轉紅,交主控裁示).
+  1. **單一出口**:`src` 內無任何 `console.*`、`process.stdout|stderr|emitWarning`(`unit-diaglog` 掃描,註解與字串不計);診斷輸出只經 wsemi `getDiag`;`src/getDiag.mjs` 已刪.
+  2. **驅動呼叫之單一接縫**:`new PgClient`、`client.connect`、`client.query`、`client.end` 各恰 1 處(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),驅動與後端之拋出與 reject 一律於接縫經 `diag.err` 後再拋出;各站點之 catch、`.catch((err) => err.message)` 之逐筆 `err`、`emitError` 之訊息引數皆取自接縫已遮罩之值.故 `diag.err` 全檔恰 9 處(接縫 4、四個 `cloneDeep` catch、`createTable` 讀樣本 1),`diag.mask` 0 處(逐筆 `err` 之遮罩即接縫).新增驅動呼叫須經接縫(`unit-diaglog` 〈驅動呼叫之單一接縫〉掃描).
+  3. **外來值 vs 固定詞彙之判定**:驅動、後端、使用端存取器/Proxy 陷阱/`toString` 拋出者為外來值(包);本套件以固定詞彙組成者不包.`createTable` 之驗證 catch 以 `ours`(WeakSet,`ownErr` 登記)區分(其讀樣本物件之存取器為使用端程式).
+  4. **站點全集**(盤點:`rg -n "Promise\.reject\(|diag\.err\(|throw " src/WOrmPostgresql.mjs`,`Promise.reject` 恰 28 處〔createTable 3、select 4、selectByPk 2、insert 4、insertBulk 4、save 4、del 3、delAll 4,`unit-diaglog` 〈reject站點盤點〉鎖定〕;新增站點須先判外來/自身並補本表;行號為 mig-pg 完成時):
+
+     | # | 站點 | 值之來源 | 處置 | 測試 |
+     |---|---|---|---|---|
+     | 1 | `pgClient`(`:419`) | `new pg.Client` 同步拋出(驅動解析連線字串,如 Invalid URL) | 外來:接縫 `diag.err` | `unit-diagerr` F1(8 操作) |
+     | 2 | `pgConnect`(`:427`) | `client.connect()` reject(8 個操作之連線失敗;getaddrinfo 回顯密碼片段等) | 外來:接縫 | `unit-diagerr` F2;`api-diaglog` PG-R3(真驅動,8 操作) |
+     | 3 | `pgRun`(`:437`) | `client.query()` reject:createTable DDL、select、selectByPk、insertBatches 之 BEGIN/INSERT/COMMIT、save 預讀/INSERT/UPDATE、del、delAll | 外來:接縫 | `unit-diagerr` F3;`api-diaglog` 真後端回顯 |
+     | 4 | `pgEnd`(`:445`) | `client.end()` reject(`finally` 內) | 外來:接縫 | `unit-diagerr` F4 |
+     | 5 | insertBatches 之 `throw err`(`:555`) | ROLLBACK 後重拋 BEGIN/INSERT/COMMIT 之錯誤(已於接縫遮罩) | 沿用接縫之值 | F3 |
+     | 6 | insertBatches 之 ROLLBACK `.catch(() => {})` | ROLLBACK 自身之 reject | 吞下,無輸出(不取代原錯誤) | F3 |
+     | 7 | insert、insertBulk、save、del 之 `cloneDeep` catch(`:1050`、`:1184`、`:1315`、`:1754`) | 呼叫端物件之存取器/Proxy 陷阱拋出之值 | 外來:`diag.err` | `unit-diagerr` F5 |
+     | 8 | createTable 之驗證 catch(`:662`) | 讀樣本物件(存取器、`toString`、Proxy)拋出之值 | 外來:`ours.has(err) ? err : diag.err(err)` | `unit-diagerr` F6 |
+     | 9 | createTable 自身之 `obj[…] is not an effective object`、`invalid createTable: …`(`:313`、`:322`、`:327`、`:333`、`:651`) | 本套件固定詞彙 | 不包(`ownErr`) | `unit-diagerr` O1–O4 |
+     | 10 | select、delAll 之 cvFind/cvOrder 錯誤(`:776`、`:1942`)與 buildSelect/buildDelete 錯誤(`:794`、`:1952`) | 本套件(含呼叫端欄名與使用端 hook 訊息之回顯,見已知限制 1) | 不包 | O5–O7、O16 |
+     | 11 | insert、insertBulk 之 checkData(`:1065`、`:1199`),save 整批檢核(`:1347`),checkKeys(`:255`) | 本套件固定詞彙(`invalid id|data`) | 不包 | O8–O10、O14 |
+     | 12 | selectByPk 之 `can not select by pk[…]`(`:946`)、select 之 `can not select by find[…]` | 本套件(含呼叫端輸入回顯) | 不包 | O15 |
+     | 13 | save、del 逐筆之 `rowErrs[k]`(`:1396`)、`idErrOf`(`:1820`)、genInsert/genConflict 之 `err.message`(`:1507`)、`'no column to update'`(`:1613`) | 本套件固定詞彙 | 不包 | O11–O13 |
+     | 14 | save INSERT/UPDATE、del 逐筆之 `err: err.message`(`:1581`、`:1672`、`:1854`) | 後端錯誤(取自接縫已遮罩之錯誤) | 外來:接縫(逐筆 `err` 建立時即遮) | F3;`api-diaglog` |
+     | 15 | createTable、delAll 之 `.catch((err) => res = err.message)`(`:701`、`:2014`) | 後端錯誤(接縫已遮罩) | 外來:接縫 | F3;`api-diaglog` |
+     | 16 | `emitError` 之 `ee.emit('error', mode, data, getErrMsg(err))` | 訊息引數由各站點之值組成(外來者已遮罩);`data` 為呼叫端輸入,屬回傳契約 | 本身不遮(同時收固定詞彙錯誤) | F2、O1–O16 之事件斷言 |
+     | 17 | emitChange/emitError 之 catch → `diag(…)`(`:390`、`:403`) | 訂閱函數拋出之值 | 診斷輸出:`diag.brief` 摘要、細節經 `maskDiagCopy`(detail 清單) | `unit-diaglog` 語料 wire 子集 |
+     | 18 | 建構子 `throw`(`:82`、`:126`) | 本套件固定詞彙(不回顯值) | 不包 | `unit-diaglog` R18-8 |
+     | 19 | 未掛 `client.on('error')`(連線建立後被後端非同步中斷之未捕捉例外) | 驅動 | 範圍外(既有缺口,待裁示) | — |
+     | 20 | console 出口 | 無(僅 getDiag) | — | 單一出口掃描 |
+  5. **回傳契約**:無憑證之值與修改前相同(身分、訊息、事件 payload 與先後);`test/tools/diagScenario.mjs` 情境之結果逐項等於 `test/tools/diagGolden.json`(由修改前 HEAD 產生,第 161 項**未重產**,仍全綠),五種選項組合皆同(`api-diaglog` 〈回傳契約不變〉).含憑證者(S29)為預期之行為變化,見 README〈Breaking changes〉.
 - 盤點指令(可重跑;判準括號內為預期):
-  - `rg -n "console\.|process\.(stdout|stderr|emitWarning)" src` (僅 `getDiag.mjs` 4 處 console.log 與註解)
-  - `git grep -n -E "^\s*//\s*console\." HEAD -- src` (修改前註解行 40)
-  - `rg -n "diag\(" src/WOrmPostgresql.mjs` (2 處:change、error)
-  - `rg -n "from './getDiag.mjs'" src` (恰 1)
+  - `rg -n "console\.|process\.(stdout|stderr|emitWarning)" src` (僅註解:無程式碼)
+  - `rg -n "new PgClient|client\.(connect|query|end)\(" src/WOrmPostgresql.mjs` (程式碼各恰 1,於 `pgClient`、`pgConnect`、`pgRun`、`pgEnd`;其餘為註解)
+  - `rg -n "diag\.err\(" src/WOrmPostgresql.mjs` (9 處程式碼,另註解)、`rg -n "diag\(" src/WOrmPostgresql.mjs` (2 處)、`rg -n "from 'wsemi/src/getDiag(Secrets)?\.mjs'" src` (各 1)、`ls src/getDiag.mjs` (不存在)
 - 測試與指令:
-  - `npx mocha test/unit-diaglog.test.mjs --timeout 180000`(不需 docker:getOptLog/getDiag/getBriefErr/getCred/getSecrets/maskText/cpMask 純函數、單一出口掃描、建構函式訊息).
-  - `npx mocha test/api-diaglog.test.mjs --timeout 180000`(需 docker,容器 `worm-test-pg-diaglog`、埠序號 7;預設/logDetail/funLog 實測 console、回傳契約 golden、憑證不外洩).
-  - 共用:`test/tools/diagScenario.mjs`、`test/tools/diagGolden.json`;`test/tools/pgContainer.mjs` 之 `PORTS` 登錄 `worm-test-pg-diaglog`:7.
-  - 現況:`unit-diaglog` 50 案、`api-diaglog` 33 案(含五種選項組合 × 一般/壞訂閱函數 × 可連線/不可連線之 golden 比對 10 案);全套 `npm test`:3695 passing / 610 pending / 0 failing.
-  - 修前紅(新測試跑於 HEAD 之 `src`,`tmp/pg-run01/final/B-red-head-*.log`):api 33 案中 18 案紅(預設輸出、logDetail、funLog、遮罩、非 Error 值、站點全集、選項型別/快照等診斷輸出行為);其餘 15 案在 HEAD 亦為綠(golden 回傳契約比對 10 案 + 守則 5 案),證明回傳契約與既有連線行為不變;unit 之單一出口掃描 1 案紅(其餘為純函數,對 HEAD 無對應).外審所指各漏洞以新增測試對「外審前快照」重現:`unit-diaglog` 12 案紅(`red2-unit.log`)後修.
-  - 變異(`tmp/pg-run01/mutate.mjs`,於副本逐項改壞 `getDiag.mjs`/`WOrmPostgresql.mjs`):56 個,54 個殺死;存活 2 個皆等價——G22(`swallow` 第一層 `t.call(r, undefined, noop)` 與第二層 `x.then(undefined, noop)` 互為冗餘,另設 G22b〔完全不處理〕、G22c〔拿掉第二層〕皆殺死)、W11(對照用,刻意等價).變異須先確認 `find` 恰 1 處(否則 `NOT_APPLIED`),程式重構後須檢查有無 `NOT_APPLIED`.
-  - 外審:terra 額度用盡(2026-10-28 08:40,`You've hit your usage limit … try again at 10:56 AM`)→ Argon(`gemini-4-argon-high`,23.9 分)提 24 條(A-5 含 3 個子點,共 26 列);屬實 23、部分屬實 2、誤報 1;詳見修正報告〈外審評分表〉.
-- 已知限制:
-  1. reject 值與 `error` 事件 payload 為後端/驅動原文(如 `password authentication failed for user "x"`、`connect ECONNREFUSED 127.0.0.1:5432`、`getaddrinfo ENOTFOUND <主機>`),以及本套件既有訊息中的回顯(`createTable` 樣本非物件之 `obj[<值>] is not an effective object`、`select`/`selectByPk` 結果型別防禦分支之 `can not select by find[…]|pk[…]`、`cvFind`/`cvOrder` 之欄名與 Proxy 陷阱訊息),屬回傳契約,不遮罩(外審 A-1、A-2、A-4;待主控裁示).畸形網址(密碼含未編碼之 `@ / ? #`)時 reject 的後端訊息會回顯密碼片段(A-3):診斷輸出(logDetail/funLog)已遮罩,reject 值依契約維持原文;文件要求密碼百分比編碼.
-  2. 使用端自訂 Error 子類別之 logDetail 副本為 `Error` + 原型鏈上之 `name`(`util.inspect` 首行不含子類別名);使用端自訂類別實例為純物件;Map/Set/RegExp/Promise 為 `'[Object]'`;Buffer 為 `'[Binary N bytes]'`;內建錯誤類別(Error、TypeError、RangeError、SyntaxError、ReferenceError、EvalError、URIError、AggregateError)輸出與舊版逐字相同(外審 F-2,README 已載).
-  3. 帳號不足 3 字元不單獨遮罩、不足 4 位之數字密碼不以數值型別遮罩(避免吞掉無關文字/數值);預設 `opt.url`(`postgresql://user:password@127.0.0.1:5432`)使詳情中的 `user`、`password` 兩個英文字被遮罩(外審 F-1).
-  4. Proxy 之陷阱函數在 `instanceof`/原型判斷時可能被執行(不用 Node 內建模組,無法預先辨識 Proxy;外審 B-8.3、C-3);`Error.prepareStackTrace` 由 source-map-support 等於載入前掛上時,logDetail 之 stack 以 `[Getter/Setter]` 代替.
-  5. 驅動/程式庫自身輸出(pg-connection-string 之 sslmode 警告、knex 固定文字警告、`DEBUG=knex:*`)不經單一出口(見站點全集);knex 警告於 793 個屬性名 × 13 值之 `Object.prototype` 汙染掃描下 0 次輸出(`tmp/pg-run01/probe-knex-pollute.mjs`,外審 A-5.2 判為不可達).
-  6. 範圍外、既有、待主控裁示:①`new PgClient` 未掛 `client.on('error')`,連線建立後被後端非同步中斷時為未捕捉例外(行程終止並印出後端錯誤到 stderr);②`insertBatches` 之 `BEGIN/COMMIT/ROLLBACK` 為字串查詢(R8 刻意排除於 `pgq`),`Object.prototype.name` 被資料型汙染為 >63 字元時 pg 會當具名查詢並 `console.error`(pg-protocol serializer;實測 `normalizeQueryConfig('BEGIN')` 繼承 `name`).
+  - `npx mocha --no-parallel test/unit-diaglog.test.mjs test/unit-diagerr.test.mjs --timeout 180000`(不需 docker,假 `pg.Client`:`test/tools/fakePg.mjs`).`unit-diaglog`:wsemi 語料 wire 子集之接線(DISPOSITION 表逐案處置,日後 wsemi 新增 wire 案即轉紅)、選項與出口、秘密來源接線、單一出口與站點盤點、建構函式訊息;`unit-diagerr`:對外錯誤值之站點矩陣(F1–F6)與固定詞彙原樣(O1–O16).形態類測試(字串、鍵、Symbol、包裝物件、Proxy、二進位、Error、循環、數字秘密、摘要代碼集合、秘密導出)已刪,由 wsemi 語料於 wsemi 內測一次(D5).
+  - `npx mocha --no-parallel test/api-diaglog.test.mjs --timeout 180000`(需 docker,容器 `worm-test-pg-diaglog`、埠序號 7):預設/logDetail/funLog 實測 console、回傳契約 golden、憑證不外洩、**真驅動之對外錯誤值**(PG-R3 畸形網址 8 操作;後端回顯資料值等於密碼之 insert/insertBulk/select/delAll/createTable/save/del)。
+  - 共用:`test/tools/diagScenario.mjs`、`test/tools/diagGolden.json`、`test/tools/fakePg.mjs`.
+- 驗證(mig-pg,2026-10-29):修前紅(新測試跑於 HEAD 之 `src`:unit 120 案中 66 案紅〔其餘 54 案為固定詞彙原樣、建構子訊息、單一出口掃描等 HEAD 亦成立者〕;api 41 案中 7 案紅〔logDetail 格式、畸形網址 reject、PG-R3 8 操作、後端回顯 insert/insertBulk/select、delAll/createTable、save/del 逐筆、save 預讀〕)、變異 64 個(`tmp/mig-pg/mutate.mjs`:接縫 4、各站點繞過接縫 36、cloneDeep 4、createTable 2、誤包固定詞彙 11、宣告 7)全數殺死(1 個僅由盤點掃描殺死:ROLLBACK 之 reject 被吞下,行為等價);api 層(挑 8 個)單獨殺 5/8(未殺者:BEGIN 與 `end` 失敗真驅動難造、createTable 固定詞彙路徑不涉驅動,皆由 unit 層之假驅動殺死).詳見報告.
+- 已知限制與待裁示:
+  1. **回顯呼叫端自身輸入之訊息不遮**(屬回傳契約;待主控裁示是否同樣遮憑證):`createTable` 樣本非物件之 `obj[<值>]`、`can not select by find|pk[…]`、`cvFind`/`cvOrder` 之欄名回顯與使用端 getter/Proxy 陷阱所拋錯誤之訊息(`cvFind.mjs` 之 `fail('can not read keys: …')`、`invalid find: <hook 訊息> at [find]`);`'error'` 事件之 `data` 引數為呼叫端輸入.
+  2. `new PgClient` 未掛 `client.on('error')`:連線建立後被後端非同步中斷為未捕捉例外(既有,範圍外).
+  3. `BEGIN/COMMIT/ROLLBACK` 不經 `pgq`(R8 刻意):`Object.prototype.name` 資料型汙染 > 63 字元時 pg 當具名查詢並 `console.error`(pg-protocol serializer;既有,範圍外).
+  4. wsemi 規格之已知限制(dspec §5)適用:reject 清單之短密碼(< 4 字元)不遮、單獨帳號於 reject 不遮、私有欄位無法複製至副本、Node < 20.16 無 `util.types` 時 Proxy 不可偵測等;`pg` 之 `DatabaseError` 實例自帶 `name = 'error'`,wsemi 之類別名規則優先取實例 `name`,故真驅動錯誤之 `errType` 為 `Error`(宣告 `types: ['DatabaseError']` 僅對 `name` 未被改寫者生效;已列 `建議wsemi修正.md`).
+  5. 驅動/程式庫自身輸出(pg-connection-string 之 sslmode 警告、knex 固定文字警告、`DEBUG=knex:*`)不經單一出口(README 載明);第 153 項之盤點結論不變.
 
 ## 案例表閘門最終結果(第 3 次執行 v10:定稿實作 vs HEAD `8133f58`;工具 `tmp/cases/gate.mjs v10`;歷程 v8 → v9〔wsemi 組加註 `schema` 旗標重跑〕→ v10〔外審 sol 後 `src/emitKnex.mjs`、`buildSql.mjs`、`WOrmPostgresql.mjs` 有改,整表重跑;runner 加整表全欄快照 `unchangedFull`、預言機改在 select 之前取得;歸類器 patch 4〕)
 
@@ -379,12 +390,12 @@
 - `rg -n "cvOrmFind\(" src` (恰 1)、`rg -n "cvFind\(" src/WOrmPostgresql.mjs` (2)
 - `rg -n "buildSelect\(|buildDelete\(|lowerFindEq\(" src/WOrmPostgresql.mjs` (站點全集,R6:select 1、selectByPk 1、save 預讀 1、del 1、delAll 1;lowerFindEq 3)
 - `rg -n "withCleanProto|process\.env" src` (空)
-- `rg -n "client\.query\(" src/WOrmPostgresql.mjs | rg -v "pgq\(|BEGIN|COMMIT|ROLLBACK"` (空)
+- `rg -n "client\.query\(" src/WOrmPostgresql.mjs` (程式碼恰 1 處,於 `pgRun`;其餘為註解;R18 單一接縫)
 - `rg -n "\./lowerFind|eqNode|ir-snapshots|genIrSnapshots|unit-lowerfind|[ (\`]src/lowerFind" src test` (僅 `test/unit-irsemantics.test.mjs` 之 I5 守門碼自身一行;第 94 項①後 `lowerFind`/`lowerFindEq` 皆自 wsemi 引入)、`rg -n "from 'wsemi/src/lowerFind(Eq)?\.mjs'" src` (cvFind 1、WOrmPostgresql 1)
 - `node test/tools/pollutionSweep.mjs --all --protos --symbols` (diff 0、leak 0;升版 knex 必跑)
 - `node -e "console.log(require('./package.json').dependencies.knex)"` (確切版本字串 `3.3.0`,不含 `^`/`~`;`npm ls knex` 單一版本)
 - `docker volume ls -q -f dangling=true | wc -l` 於全套測試前後 (不增)
-- 第 153 項(R18):`rg -n "console\.|process\.(stdout|stderr|emitWarning)" src` (僅 `getDiag.mjs` 之 4 處 `console.log` 與註解)、`rg -n "diag\(" src/WOrmPostgresql.mjs` (2 處)、`rg -n "from './getDiag.mjs'" src` (恰 1)
+- 第 153、161 項(R18):`rg -n "console\.|process\.(stdout|stderr|emitWarning)" src` (無程式碼,僅註解)、`rg -n "diag\(" src/WOrmPostgresql.mjs` (2 處)、`rg -n "diag\.err\(" src/WOrmPostgresql.mjs` (9 處程式碼)、`rg -n "from 'wsemi/src/getDiag(Secrets)?\.mjs'" src` (各 1)、`ls src/getDiag.mjs` (不存在)
 - 第 66 項(R17):`rg -n "chkOrmStr\(" src` (WOrmPostgresql 4、cvWrite 2)、`rg -n "chkOrmData\(" src` (恰 1)、`rg -n -i "isCleanStr|isWellFormed|toWellFormed|reLone" src` (空)、`rg -n "emitError\('save', \[|emitChange\('insert', \[" src/WOrmPostgresql.mjs` (皆 `[cloneDeep(v)]`,5 處)、`rg -n "needConn" src/WOrmPostgresql.mjs` (save、del 各 3 處)
 
 ## 已知限制(文件化)

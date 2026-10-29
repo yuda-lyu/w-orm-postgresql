@@ -1,806 +1,472 @@
 import fs from 'fs'
 import util from 'util'
 import assert from 'assert'
+import pg from 'pg'
+import dc from 'wsemi/src/_diagCases.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
-import { getOptLog, getCred, getSecrets, getSecretsOfUrl, maskText, cpMask, getDiag, getBriefErr } from '../src/getDiag.mjs'
+import { USER, PW, urlOf, fakeOf, build, buildRaw, runOp } from './tools/fakePg.mjs'
 
 
-//rulebook R18: 診斷輸出單一出口(src/getDiag.mjs)之純函數測試, 不連線、不需docker
-//對應: 預設只輸出標籤與不含個資之摘要(R18-1)、logDetail還原細節且憑證遮罩(R18-2)、funLog收完整細節(R18-3)、輸出不得使呼叫端拋錯(R18-4)、
-//      憑證遮罩之完整性(R18-5)、單一出口(R18-7)、建構函式訊息不回顯連線網址與帳密(R18-8)
+//rulebook R18(依dspec〈診斷輸出與遮罩〉與wsemi R-DIAG-01): 診斷輸出由wsemi之getDiag單一擁有, 本檔為「接線測試」(確認本套件之站點與宣告有接上), 不重做形態測試
+//  形態類案(字串、鍵、Symbol、包裝物件、Proxy、二進位、Error、循環、數字秘密、摘要代碼集合、秘密導出等)由wsemi共用語料(wsemi/src/_diagCases.mjs)驅動, 於wsemi內測一次;
+//  本檔以同一語料之wire子集, 經本套件之真實呼叫點(change與error事件之訂閱函數拋錯 -> diag)與真實對外站點(reject)執行
+//對應: 預設只輸出標籤與不含個資之摘要(R18-1)、logDetail輸出遮罩後細節(R18-2)、funLog收完整細節(R18-3)、輸出不得使呼叫端拋錯(R18-4)、
+//      憑證遮罩接線(R18-5)、單一出口與站點盤點(R18-7)、建構函式訊息不回顯連線網址與帳密(R18-8); 對外錯誤值遮罩之站點矩陣見unit-diagerr
+//不需docker, 不連線(假pg.Client, 見tools/fakePg.mjs)
 
 
-let PW = 'S3cretPw'
-let USER = 'tuser'
-let URL = `postgresql://${USER}:${PW}@db.example.local:5432`
 let ID = 'u-secret-001@example.com'
 
 
-//cap, 擷取console各方法之輸出
-function cap(fn) {
+//cap, 擷取console各方法之輸出(以util.format格式化, 與實際輸出一致), 並記錄所用方法
+async function cap(fn) {
     let lines = []
+    let calls = []
     let ks = ['log', 'info', 'warn', 'error', 'debug']
     let olds = ks.map((k) => console[k])
     ks.forEach((k) => {
-        console[k] = (...a) => lines.push(util.format(...a)) //與console.log實際輸出一致(Error顯示message與stack、Symbol鍵與陣列附加屬性亦顯示)
+        console[k] = (...a) => {
+            calls.push({ m: k, args: a })
+            lines.push(util.format(...a))
+        }
     })
     try {
-        fn()
+        await fn()
     }
     finally {
         ks.forEach((k, i) => {
             console[k] = olds[i]
         })
     }
-    return lines
+    return { lines, calls }
+}
+
+//fire, 於實例掛上拋錯之error訂閱函數並以表名不合之createTable觸發(本套件自身之整批性錯誤: 不連線, 發error事件, 訂閱函數拋出value)
+let fire = async (w, value) => {
+    w.on('error', () => {
+        throw value
+    })
+    await w.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+}
+
+//fireChange, 於實例掛上拋錯之change訂閱函數並以成功之insert觸發(change事件站)
+let fireChange = async (w, value) => {
+    w.on('change', () => {
+        throw value
+    })
+    return w.insert({ id: 'a', v: 1 })
 }
 
 
-describe('getOptLog', function() {
+describe('wsemi共用語料之接線(D5): wire子集 x 本套件之真實呼叫點', function() {
 
-    it('R18-3 未給或型別錯誤者忽略並用預設(與本套件其他選項型別錯誤之處理一致: 不拋錯)', function() {
-        for (let o of [undefined, null, {}, 1, 'x', { logDetail: 'true' }, { logDetail: 1 }, { logDetail: {} }, { funLog: 'x' }, { funLog: {} }, { funLog: null }]) {
-            assert.deepStrictEqual(getOptLog(o), { logDetail: false, funLog: null }, JSON.stringify(o))
-        }
+    //處置表: wsemi語料中wire為true之每一案在本套件之處置(無空白格; wsemi新增wire案時本表須補, 否則「分類完整」案轉紅)
+    //  detail: 訂閱函數拋出make()之值, 經'error handler threw'與'change handler threw'兩站, funLog所收detail須符合語料之期望
+    //  reject: 同一值作為驅動之reject值, 對外之reject須符合reject清單之期望(noSecret: 'reject')
+    //  adapt:  語料之期望為其call()回傳之形狀, 本套件之呼叫點形狀不同, 以接線版斷言(下方各adapt案)
+    //  n/a:    本套件未宣告該來源(儲存路徑、權杖)或未使用該函數
+    let DISPOSITION = {
+        T01: 'detail+reject',
+        T07: 'detail+reject',
+        K01: 'detail+reject',
+        K09: 'detail+reject',
+        V02: 'detail+reject',
+        E01: 'detail+reject',
+        E07: 'detail+reject',
+        P01: 'detail+reject',
+        S07: 'detail+reject',
+        C01: 'adapt(safe)',
+        O01: 'adapt(logDetail console)',
+        O15: 'adapt(safeKeys宣告)',
+        R01: 'adapt(reject身分)',
+        R02: 'adapt(等價案: unit-diagerr F2、api-diaglog PG-R3; 語料宣告2個url來源, 本套件之opt.url只有1個)',
+        R04: 'adapt(reject字串)',
+        R07: 'adapt(unit-diagerr O1-O15)',
+        R12: 'adapt(reject不遮帳號、detail遮帳號)',
+        R11: 'n/a(本套件未宣告儲存路徑paths)',
+        A01: 'n/a(本套件不用genDiagFunLog)',
+        A07: 'n/a(本套件不用genDiagFunLog)',
+    }
+    let byId = (id) => dc.cases.find((c) => c.id === id)
+    let ctxOf = () => dc.mkCtx({ util: true })
+    let urlOfCtx = (ctx) => urlOf(ctx.sec.password, ctx.sec.username)
+
+    it('分類完整: 語料wire案(含wsemi日後新增者)皆已於DISPOSITION表處置', function() {
+        let wires = dc.cases.filter((c) => c.wire).map((c) => c.id).sort()
+        assert.deepStrictEqual(Object.keys(DISPOSITION).sort(), wires)
+        assert.ok(wires.length >= 20, `wire案數 ${wires.length}`)
     })
 
-    it('R18-3 logDetail為true、funLog為函數才生效', function() {
-        let f = () => {}
-        assert.deepStrictEqual(getOptLog({ logDetail: true, funLog: f }), { logDetail: true, funLog: f })
-        assert.deepStrictEqual(getOptLog({ logDetail: false }), { logDetail: false, funLog: null })
+    let detailIds = Object.keys(DISPOSITION).filter((id) => DISPOSITION[id] === 'detail+reject')
+
+    for (let id of detailIds) {
+        let c = byId(id)
+
+        for (let site of ['error', 'change']) {
+            it(`${id} ${c.label} -> ${site}事件站之funLog detail符合語料期望(接線)`, async function() {
+                let ctx = ctxOf()
+                let value = c.make(ctx)
+                let got = []
+                let w = build(fakeOf(), { funLog: (...a) => got.push(a) }, { url: urlOfCtx(ctx) })
+                if (site === 'error') {
+                    await fire(w, value)
+                }
+                else {
+                    await fireChange(w, value)
+                }
+                assert.strictEqual(got.length, 1, 'funLog應恰收1次')
+                assert.strictEqual(got[0][0], `${site} handler threw`)
+                assert.strictEqual(dc.verify(c, got[0][2], ctx), null, `${id} ${site}`)
+            })
+        }
+
+        it(`${id} ${c.label} -> 作為驅動之reject值, 對外值不含憑證(reject清單; 存取器不執行)`, async function() {
+            let ctx = ctxOf()
+            let value = c.make(ctx)
+            let r = await runOp(build(fakeOf({ conn: () => value }), {}, { url: urlOfCtx(ctx) }), (w) => w.select({}))
+            assert.ok(r.has)
+            assert.strictEqual(dc.verify({ expect: { noSecret: 'reject', userCode: c.expect.userCode } }, r.rej, ctx), null, id)
+        })
+    }
+
+    it('C01(adapt) 摘要代碼: ECONNREFUSED、EAI_AGAIN、E2BIG收; 本套件宣告sqlstate與DatabaseError', async function() {
+        let c = byId('C01')
+        let ctx = ctxOf()
+        let errs = c.make(ctx)
+        let got = []
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a) })
+        let i = 0
+        w.on('error', () => {
+            throw errs[i++]
+        })
+        for (let k = 0; k < errs.length; k++) {
+            await w.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+        }
+        let out = got.map(([, safe]) => {
+            let { mode, ...rest } = safe
+            return rest
+        })
+        assert.strictEqual(c.expect.check(out, ctx), true)
+        assert.ok(got.every(([, safe]) => safe.mode === 'createTable'))
+
+        //本套件宣告: PostgreSQL之SQLSTATE(sqlstate)與類別名DatabaseError(以類別名為DatabaseError且實例name未被改寫者驗證宣告有接上;
+        //真驅動之DatabaseError實例自帶name='error', wsemi之類別名規則優先取實例name故列為Error, 見報告〈建議wsemi修正〉)
+        let got2 = []
+        let w2 = build(fakeOf(), { funLog: (...a) => got2.push(a) })
+        class DatabaseError extends Error {}
+        let specs = [
+            Object.assign(new DatabaseError('x'), { code: '23505' }),
+            Object.assign(new DatabaseError('x'), { code: '3D000' }),
+            Object.assign(new Error('x'), { code: '23505' }),
+            Object.assign(new Error('x'), { code: 12345 }),
+            Object.assign(new Error('x'), { code: 'E123456789' }),
+            Object.assign(new Error('x'), { code: 'ER_DUP_ENTRY' }),
+            Object.assign(new (class UserAlice01 extends Error {})('x'), { code: 'EAI_AGAIN' }),
+        ]
+        let j = 0
+        w2.on('error', () => {
+            throw specs[j++]
+        })
+        for (let k = 0; k < specs.length; k++) {
+            await w2.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+        }
+        assert.deepStrictEqual(got2.map(([, s]) => s), [
+            { mode: 'createTable', errType: 'DatabaseError', errCode: '23505' },
+            { mode: 'createTable', errType: 'DatabaseError', errCode: '3D000' },
+            { mode: 'createTable', errType: 'Error', errCode: '23505' },
+            { mode: 'createTable', errType: 'Error' },
+            { mode: 'createTable', errType: 'Error' },
+            { mode: 'createTable', errType: 'Error' },
+            { mode: 'createTable', errType: 'Error', errCode: 'EAI_AGAIN' },
+        ])
     })
 
-    it('R18-3 讀取選項拋錯者忽略該選項, 不連累另一個有效選項', function() {
-        let f = () => {}
-        let o1 = {
-            get logDetail() {
-                throw new Error('x')
-            },
-            funLog: f
-        }
-        assert.deepStrictEqual(getOptLog(o1), { logDetail: false, funLog: f })
-        let o2 = {
-            logDetail: true,
-            get funLog() {
-                throw new Error('x')
-            }
-        }
-        assert.deepStrictEqual(getOptLog(o2), { logDetail: true, funLog: null })
+    it('O01(adapt) logDetail為true: console.log(label, 遮罩後細節)一行(stdout), 細節為Error副本、憑證為***', async function() {
+        let c = byId('O01')
+        let ctx = ctxOf()
+        let { detail } = c.make(ctx)
+        let w = build(fakeOf(), { logDetail: true }, { url: urlOfCtx(ctx) })
+        let { calls } = await cap(() => fire(w, detail))
+        assert.strictEqual(calls.length, 1)
+        assert.strictEqual(calls[0].m, 'log')
+        assert.strictEqual(calls[0].args[0], 'error handler threw')
+        assert.ok(calls[0].args[1] instanceof Error && calls[0].args[1] !== detail)
+        assert.strictEqual(dc.verify({ expect: { noSecret: 'detail' } }, calls, ctx), null)
     })
 
-    it('R18-3 回傳固定快照: 其後改動opt不影響; 選項之getter只被讀取一次', function() {
-        let n = 0
-        let o = {
-            get logDetail() {
-                n++
-                return n === 1
-            }
-        }
-        let snap = getOptLog(o)
-        assert.strictEqual(snap.logDetail, true)
-        assert.strictEqual(n, 1)
-        let diag = getDiag(snap)
-        let lines = cap(() => diag('L', { a: 1 }, () => 'd', true))
-        assert.deepStrictEqual(lines, ['d'])
-        assert.strictEqual(n, 1)
+    it('O15(adapt) safe只含mode、errType、errCode: 套件宣告safeKeys為[mode], 白名單外之鍵(如password)不出現', async function() {
+        let got = []
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a) })
+        await fire(w, Object.assign(new Error('x'), { password: PW, mode: 'POLLUTED', code: 'ECONNREFUSED' }))
+        assert.deepStrictEqual(Object.keys(got[0][1]).sort(), ['errCode', 'errType', 'mode'])
+        assert.strictEqual(got[0][1].mode, 'createTable')
+        let src = fs.readFileSync('./src/WOrmPostgresql.mjs', 'utf8')
+        assert.ok(src.indexOf('safeKeys: [\'mode\']') >= 0, 'cfg須宣告safeKeys: [mode]')
+    })
+
+    it('R01(adapt) 不含憑證之驅動錯誤: reject為同一原物件(身分不變)', async function() {
+        let c = byId('R01')
+        let value = c.make(ctxOf())
+        let r = await runOp(build(fakeOf({ conn: () => value })), (w) => w.select({}))
+        assert.strictEqual(r.rej, value)
+    })
+
+    it('R04(adapt) 字串reject含密碼: reject為遮罩後字串, 期望同語料', async function() {
+        let c = byId('R04')
+        let ctx = ctxOf()
+        let value = c.make(ctx)
+        let r = await runOp(build(fakeOf({ conn: () => value }), {}, { url: urlOfCtx(ctx) }), (w) => w.select({}))
+        assert.strictEqual(dc.verify(c, r.rej, ctx), null)
+        assert.strictEqual(r.rej, 'failed ***')
+    })
+
+    it('R12(adapt) 單獨帳號出現於後端訊息: reject不遮(身分不變)、診斷輸出之detail遮', async function() {
+        let c = byId('R12')
+        let ctx = ctxOf()
+        let value = c.make(ctx)
+        let r = await runOp(build(fakeOf({ conn: () => value }), {}, { url: urlOfCtx(ctx) }), (w) => w.select({}))
+        let got = []
+        let w2 = build(fakeOf(), { funLog: (...a) => got.push(a) }, { url: urlOfCtx(ctx) })
+        await fire(w2, value)
+        assert.strictEqual(c.expect.check({ e: value, r: r.rej, c: got[0][2] }, ctx), true)
     })
 
 })
 
 
-describe('getDiag', function() {
+describe('診斷輸出之選項與出口(接線)', function() {
 
-    it('R18-1 預設只輸出標籤與摘要, 不呼叫getDetail(細節在預設路徑不被取得)', function() {
-        let n = 0
-        let diag = getDiag(getOptLog({}))
-        let lines = cap(() => {
-            diag('L1', { mode: 'insert', errType: 'Error' }, () => {
-                n++
-                return `detail ${ID}`
-            })
-            diag('L2', undefined, () => {
-                n++
-                return ID
-            })
-            diag('L3')
-        })
-        assert.deepStrictEqual(lines, ['L1 { mode: \'insert\', errType: \'Error\' }', 'L2', 'L3'])
-        assert.strictEqual(n, 0)
+    it('R18-1 預設: 只輸出標籤與摘要一行(stdout, 兩站皆console.log), 不含資料值、id、訂閱函數之錯誤原文、憑證; 不取細節', async function() {
+        let w = build(fakeOf())
+        let e = new Error(`listener ${ID} ${urlOf()}/app ${USER}:${PW}`)
+        let { lines, calls } = await cap(() => fire(w, e))
+        assert.deepStrictEqual(lines, ['error handler threw { mode: \'createTable\', errType: \'Error\' }'])
+        let w2 = build(fakeOf())
+        let c2 = await cap(() => fireChange(w2, e))
+        assert.deepStrictEqual(c2.lines, ['change handler threw { mode: \'insert\', errType: \'Error\' }'])
+        assert.ok(calls.concat(c2.calls).every((x) => x.m === 'log'), '兩站皆為stdout(console.log)')
     })
 
-    it('R18-2 logDetail為true時還原細節: 標籤加細節; bare者只輸出細節(與舊版該站之console.log(細節)相同)', function() {
-        let diag = getDiag(getOptLog({ logDetail: true }))
-        let lines = cap(() => {
-            diag('L1', { a: 1 }, () => `detail ${ID}`)
-            diag('L2', { a: 1 }, () => `bare ${ID}`, true)
-            diag('L3', undefined)
-        })
-        assert.deepStrictEqual(lines, [`L1 detail ${ID}`, `bare ${ID}`, 'L3'])
-    })
-
-    it('R18-3 funLog收(label, safe, detail), 不寫console; 無細節者只收兩個引數', function() {
-        let got = []
-        let diag = getDiag(getOptLog({ funLog: (...a) => got.push(a) }))
-        let lines = cap(() => {
-            diag('L1', { a: 1 }, () => ({ id: ID }))
-            diag('L2', undefined)
-        })
-        assert.deepStrictEqual(lines, [])
-        assert.strictEqual(got.length, 2)
-        assert.deepStrictEqual(got[0], ['L1', { a: 1 }, { id: ID }])
-        assert.strictEqual(got[1].length, 2)
-        assert.deepStrictEqual(got[1], ['L2', undefined])
-    })
-
-    it('R18-1 摘要(safe)為固定詞彙, 不做子字串遮罩: 短密碼恰為固定常數之子字串時, 缺口不得洩漏密碼內容(外審 B-7)', function() {
-        //摘要之值只可能來自操作別、白名單類別名與白名單代碼(公開常數); 若對其挖空, 輸出的缺口會讓人由已知常數反推出短密碼
-        for (let pw of ['ert', 'e', 'insert', '235', 'Typ', 'rror']) {
-            let u = `postgresql://tuser:${pw}@db.example.local:5432`
-            let secrets = getSecretsOfUrl(u, `${u}/worm`)
-            let got = []
-            let diag = getDiag(getOptLog({ funLog: (...a) => got.push(a) }), secrets)
-            let safe = { mode: 'insert', errType: 'TypeError', errCode: '23505' }
-            diag('L', safe)
-            assert.deepStrictEqual(got[0][1], safe, pw)
-            let lines = cap(() => {
-                getDiag(getOptLog({}), secrets)('L', safe)
-            })
-            assert.deepStrictEqual(lines, ['L { mode: \'insert\', errType: \'TypeError\', errCode: \'23505\' }'], pw)
+    it('R18-2 logDetail為true: console.log(label, 細節), 細節為遮罩後之副本, 其餘細節(id、錯誤原文)保留; funLog並給時funLog取代console', async function() {
+        let w = build(fakeOf(), { logDetail: true })
+        let e = new Error(`listener ${ID} ${urlOf()}/app ${USER}:${PW}`)
+        let { lines } = await cap(() => fire(w, e))
+        assert.strictEqual(lines.length, 1)
+        assert.ok(lines[0].startsWith('error handler threw Error: listener '), lines[0].slice(0, 80))
+        assert.ok(lines[0].indexOf(ID) >= 0 && lines[0].indexOf('***') >= 0)
+        for (let s of [PW, `${USER}:${PW}`, urlOf()]) {
+            assert.ok(lines[0].indexOf(s) < 0, `含憑證[${s}]`)
         }
+        let got = []
+        let w2 = build(fakeOf(), { logDetail: true, funLog: (...a) => got.push(a) })
+        let c2 = await cap(() => fire(w2, e))
+        assert.deepStrictEqual(c2.lines, [])
+        assert.strictEqual(got.length, 1)
     })
 
-    it('R18-3 funLog存在時logDetail不另寫console(funLog取代console)', function() {
+    it('R18-3 funLog收(label, safe, detail), 不寫console', async function() {
         let got = []
-        let diag = getDiag(getOptLog({ logDetail: true, funLog: (...a) => got.push(a) }))
-        let lines = cap(() => {
-            diag('L1', { a: 1 }, () => 'd')
-        })
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a) })
+        let e = new Error(`listener ${ID} ${PW}`)
+        let { lines } = await cap(() => fire(w, e))
         assert.deepStrictEqual(lines, [])
-        assert.deepStrictEqual(got, [['L1', { a: 1 }, 'd']])
+        assert.strictEqual(got.length, 1)
+        let [label, safe, detail] = got[0]
+        assert.strictEqual(label, 'error handler threw')
+        assert.deepStrictEqual(safe, { mode: 'createTable', errType: 'Error' })
+        assert.ok(detail instanceof Error && detail.message.indexOf(ID) >= 0 && detail.message.indexOf(PW) < 0)
     })
 
-    it('R18-4 Object.prototype上有唯讀屬性或拋錯setter(mode、errType、errCode): 診斷輸出不拋錯(摘要不經賦值), 輸出不變(外審 D-1)', function() {
-        let names = ['mode', 'errType', 'errCode']
-        let lines = null
-        let got = []
-        let err = null
+    it('R18-3 選項型別錯誤者忽略並用預設(不拋錯、不洩漏); 讀取選項拋錯者忽略該選項、不連累另一個', async function() {
+        for (let ex of [{ logDetail: 'true' }, { logDetail: 1 }, { logDetail: {} }, { funLog: 'x' }, { funLog: {} }, { funLog: null }, { logDetail: 'yes', funLog: 123 }]) {
+            let { lines } = await cap(() => fire(build(fakeOf(), ex), new Error(`listener ${ID}`)))
+            assert.deepStrictEqual(lines, ['error handler threw { mode: \'createTable\', errType: \'Error\' }'], JSON.stringify(ex))
+        }
+        let base = { url: urlOf(), db: 'app', cl: 'tdiag', pk: 'id' }
+        let f = []
+        let o1 = Object.defineProperty({ ...base, funLog: (...a) => f.push(a) }, 'logDetail', {
+            get() {
+                throw new Error('x')
+            },
+            enumerable: true
+        })
+        await fire(buildRaw(fakeOf(), o1), new Error('e'))
+        assert.strictEqual(f.length, 1, 'logDetail之getter拋錯不連累funLog')
+        let o2 = Object.defineProperty({ ...base, logDetail: true }, 'funLog', {
+            get() {
+                throw new Error('x')
+            },
+            enumerable: true
+        })
+        let { lines } = await cap(() => fire(buildRaw(fakeOf(), o2), new Error('e2')))
+        assert.strictEqual(lines.length, 1)
+        assert.ok(lines[0].startsWith('error handler threw Error: e2'), 'funLog之getter拋錯不連累logDetail')
+    })
+
+    it('R18-3 選項快照於建構時固定: 建構後改動opt, 選項之getter只被讀取一次', async function() {
+        let n = 0
+        let opt = {
+            url: urlOf(),
+            db: 'app',
+            cl: 'tdiag',
+            pk: 'id',
+            get logDetail() {
+                n++
+                return n === 1
+            }
+        }
+        let w = buildRaw(fakeOf(), opt)
+        let { lines } = await cap(async () => {
+            await fire(w, new Error('first'))
+            await w.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+        })
+        assert.strictEqual(n, 1, 'logDetail只應被讀取一次')
+        assert.strictEqual(lines.length, 2)
+        assert.ok(lines.every((l) => l.startsWith('error handler threw Error: first')), '兩次皆為建構時之快照(logDetail為true)')
+    })
+
+    it('R18-4 funLog拋錯、回傳reject之Promise、回傳會reject之thenable: 不影響操作結果, 不成為unhandledRejection', async function() {
+        let bad = []
+        let fn = (e) => bad.push(e)
+        process.on('unhandledRejection', fn)
+        try {
+            for (let funLog of [() => {
+                throw new Error('x')
+            }, () => Promise.reject(new Error('rej')), () => ({ then: () => Promise.reject(new Error('rej2')) })]) {
+                let w = build(fakeOf(), { funLog })
+                let r = await fireChange(w, new Error('listener'))
+                assert.deepStrictEqual(r, { n: 1, nInserted: 0, ok: 1 })
+            }
+            await new Promise((resolve) => setTimeout(resolve, 30))
+        }
+        finally {
+            process.off('unhandledRejection', fn)
+        }
+        assert.deepStrictEqual(bad.map(String), [])
+    })
+
+    it('R18-4 Object.prototype被資料型汙染(mode、errType、errCode、code): 摘要不採用繼承值, 輸出與操作結果不變', async function() {
+        let names = ['mode', 'errType', 'errCode', 'code']
         for (let n of names) {
             // eslint-disable-next-line no-extend-native
-            Object.defineProperty(Object.prototype, n, {
-                get() {
-                    return 'POLLUTED'
-                },
-                set() {
-                    throw new Error('setter boom')
-                },
-                configurable: true
-            })
+            Object.defineProperty(Object.prototype, n, { value: 'POLLUTED', writable: true, enumerable: true, configurable: true })
         }
+        let got = null
         try {
-            let safe = { mode: 'insert', ...getBriefErr(Object.assign(new Error('x'), { code: 'ECONNREFUSED' })) }
-            lines = cap(() => getDiag(getOptLog({ logDetail: true }), getSecretsOfUrl(URL, `${URL}/worm`))('L', safe, () => 1, true))
-            getDiag(getOptLog({ funLog: (...a) => got.push(a) }))('L', safe)
-            lines.push(...cap(() => getDiag(getOptLog({}))('L', safe)))
-        }
-        catch (e) {
-            err = e
+            let r1 = await cap(async () => fireChange(build(fakeOf()), new Error('l1')))
+            let r2 = await cap(() => fire(build(fakeOf()), new Error('l2')))
+            got = JSON.stringify([r1.lines, r2.lines])
         }
         finally {
             for (let n of names) {
                 delete Object.prototype[n]
             }
         }
-        assert.strictEqual(err, null, String(err))
-        assert.deepStrictEqual(lines, ['1', 'L { mode: \'insert\', errType: \'Error\', errCode: \'ECONNREFUSED\' }'])
-        assert.deepStrictEqual(got.map((v) => v[1]), [{ mode: 'insert', errType: 'Error', errCode: 'ECONNREFUSED' }])
+        assert.deepStrictEqual(JSON.parse(got), [['change handler threw { mode: \'insert\', errType: \'Error\' }'], ['error handler threw { mode: \'createTable\', errType: \'Error\' }']], got)
     })
 
-    it('R18-4 輸出不得使呼叫端拋錯: funLog拋錯、getDetail拋錯、console拋錯皆吞下', function() {
-        let diag1 = getDiag(getOptLog({
-            funLog: () => {
-                throw new Error('x')
-            }
-        }))
-        diag1('L', { a: 1 }, () => 'd')
-
-        let got = []
-        let diag2 = getDiag(getOptLog({ logDetail: true }))
-        let lines = cap(() => {
-            diag2('L', { a: 1 }, () => {
-                throw new Error('boom')
-            })
-        })
-        got.push(...lines)
-        assert.deepStrictEqual(got, ['L (unprintable)'])
-
-        let diag3 = getDiag(getOptLog({ funLog: (l, s, d) => got.push(d) }))
-        diag3('L', undefined, () => {
-            throw new Error('boom')
-        })
-        assert.strictEqual(got[got.length - 1], '(unprintable)')
-
-        let diag4 = getDiag(getOptLog({}))
-        let old = console.log
-        console.log = () => {
-            throw new Error('console broken')
-        }
-        try {
-            diag4('L', { a: 1 })
-        }
-        finally {
-            console.log = old
-        }
-    })
-
-    it('R18-4 funLog回傳reject之promise不成為unhandledRejection', async function() {
-        let bad = []
-        let fn = (e) => bad.push(e)
-        process.on('unhandledRejection', fn)
-        try {
-            let diag = getDiag(getOptLog({ funLog: () => Promise.reject(new Error('rej')) }))
-            diag('L', { a: 1 }, () => 'd')
-            let diag2 = getDiag(getOptLog({ funLog: () => ({ then: (a, b) => Promise.reject(new Error('rej2')) }) }))
-            diag2('L', { a: 1 }, () => 'd')
-            await new Promise((resolve) => setTimeout(resolve, 50))
-        }
-        finally {
-            process.off('unhandledRejection', fn)
-        }
-        assert.deepStrictEqual(bad.map((v) => v.message), [])
-    })
-
-    it('R18-2 憑證遮罩: 細節(console與funLog)中之密碼、帳密、連線字串一律以***取代, 其餘細節保留', function() {
-        let secrets = getSecretsOfUrl(URL, `${URL}/worm`)
-        let err = new Error(`connect ${URL}/worm failed for ${USER}:${PW} id=${ID}`)
-        err.code = 'ECONNREFUSED'
-        err.original = { message: `pw=${PW}`, nested: [PW, { deep: `x${PW}y` }] }
-
-        let got = []
-        let diag1 = getDiag(getOptLog({ funLog: (...a) => got.push(a) }), secrets)
-        diag1('L', { a: 1 }, () => ({ state: 'error', msg: err }))
-        let d = got[0][2]
-        let s = JSON.stringify(d) + String(d.msg.message) + String(d.msg.stack)
-        assert.ok(s.indexOf(PW) < 0, '密碼未遮罩')
-        assert.ok(s.indexOf(`${USER}:${PW}`) < 0 && s.indexOf(URL) < 0, '帳密或連線字串未遮罩')
-        assert.ok(d.msg.message.indexOf(ID) >= 0, '非憑證之細節被誤遮')
-        assert.strictEqual(d.msg.code, 'ECONNREFUSED')
-        assert.ok(d.msg instanceof Error && d.msg !== err)
-        assert.strictEqual(err.message.indexOf('***'), -1, '不得改動呼叫端之原物件')
-        assert.ok(err.message.indexOf(PW) >= 0)
-
-        let diag2 = getDiag(getOptLog({ logDetail: true }), secrets)
-        let lines = cap(() => {
-            diag2('L', { a: 1 }, () => ({ state: 'error', msg: err }))
-            diag2('L', { a: 1 }, () => `connect ${URL}/worm pw = '${PW}'`, true)
-        })
-        let all = lines.join('\n')
-        assert.ok(all.indexOf(PW) < 0, `console輸出含密碼: ${all.slice(0, 300)}`)
-        assert.ok(all.indexOf('***') >= 0)
-    })
-
-    it('R18-2 logDetail輸出格式與舊版一致: 無憑證之Error以util.format輸出與原物件逐字相同(訊息、堆疊、自有屬性)', function() {
-        let e1 = new Error(`listener ${ID}`)
-        let e2 = new TypeError('tt')
-        e2.code = 'ERR_X'
-        e2.extra = { a: 1, b: [1, 2] }
-        let e3 = new Error('outer', { cause: new Error('inner') })
-        let e4 = new RangeError('rr')
-        let e5 = new AggregateError([new Error('a1'), new TypeError('a2')], 'agg')
-        for (let e of [e1, e2, e3, e4, e5, 'plain string', { a: 1, b: [2] }, 5, null]) {
-            let old = util.format(e) //舊版之console.log(e)
-            let lines = []
-            let diag = getDiag(getOptLog({ logDetail: true }), getSecretsOfUrl(URL, `${URL}/worm`))
-            let o = console.log
-            console.log = (...a) => lines.push(util.format(...a))
-            try {
-                diag('L', undefined, () => e, true)
-            }
-            finally {
-                console.log = o
-            }
-            assert.deepStrictEqual(lines, [old])
-        }
-    })
-
-})
-
-
-describe('getBriefErr', function() {
-
-    it('R18-1 只列類別與機器代碼, 不含訊息文字', function() {
-        let e = new Error(`failed for ${ID} ${PW}`)
-        assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' })
-        class DatabaseError extends Error {}
-        let e2 = new DatabaseError(`dup ${ID}`)
-        e2.code = '23505'
-        assert.deepStrictEqual(getBriefErr(e2), { errType: 'DatabaseError', errCode: '23505' })
-        assert.deepStrictEqual(getBriefErr(new TypeError(ID)), { errType: 'TypeError' })
-        assert.deepStrictEqual(getBriefErr(new RangeError(ID)), { errType: 'RangeError' })
-        let e3 = new Error('x')
-        e3.code = 'ECONNREFUSED'
-        assert.deepStrictEqual(getBriefErr(e3), { errType: 'Error', errCode: 'ECONNREFUSED' })
-    })
-
-    it('R18-1 字串或非物件之值只列型別(字串內容可能夾帶資料)', function() {
-        assert.deepStrictEqual(getBriefErr(`fail ${ID}`), { errType: 'string' })
-        assert.deepStrictEqual(getBriefErr(null), { errType: 'null' })
-        assert.deepStrictEqual(getBriefErr(undefined), { errType: 'undefined' })
-        assert.deepStrictEqual(getBriefErr(12), { errType: 'number' })
-        assert.deepStrictEqual(getBriefErr({ message: ID }), { errType: 'object' })
-    })
-
-    it('R18-1 code須為明確白名單(系統錯誤名稱、Node/TLS代碼、PostgreSQL SQLSTATE), 資料值樣式者不列(含數值、電郵、員編、郵遞區號樣式之5碼、ERR_開頭之業務字串)', function() {
-        for (let c of [ID, 'alice', 'U-0001', 99999999, 12345, 18456, 0, -1, 1.5, NaN, {}, [], 'E', 'ERR_', 'enoent', '', 'a'.repeat(60), 'E12345', 'EMP001', 'EMPLOYEE1', 'USER1', 'AB123', '99999', 'A0001', 'sqlite_busy',
-            'ERR_USER_ALICE_9901', 'ERR_ID_A123456789', 'ERR_EMAIL_BOB_AT_CORP_COM', 'P0123', '20261', '08999', 'XX999', 'F0ABC', '23999', '42ABC']) {
-            let e = new Error('x')
-            e.code = c
-            assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' }, String(c))
-        }
-        for (let c of ['ENOENT', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ERR_INVALID_URL', 'ERR_INVALID_ARG_TYPE', 'CERT_HAS_EXPIRED', '23505', '28P01', '3D000', '42P01', '08006', '57P01', '0A000', '22P02', '53300', 'P0001', 'XX000']) {
-            let e = new Error('x')
-            e.code = c
-            assert.deepStrictEqual(getBriefErr(e), { errType: 'Error', errCode: c }, String(c))
-        }
-    })
-
-    it('R18-1 類別名稱須在白名單(內建錯誤類別、DatabaseError), 其餘列為Error: 自訂類別名稱、實例自有constructor屬性皆不得把識別字帶入預設摘要(外審 C-1)', function() {
-        let DynErr = { alice_smith_1990: class extends Error {} }.alice_smith_1990
-        assert.deepStrictEqual(getBriefErr(new DynErr('boom')), { errType: 'Error' })
-        for (let name of ['alice', 'EMP001', 'user_alice_smith_1990', 'E12345', 'USER1']) {
-            let e = new Error('x')
-            e.constructor = { [name]() {} }[name]
-            assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' }, name)
-        }
-        let e = new Error('x')
-        function Weird() {}
-        Object.defineProperty(Weird, 'name', { value: `bad name ${ID}` })
-        Object.defineProperty(e, 'constructor', { value: Weird, configurable: true })
-        assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' })
-        function TypeError2() {}
-        Object.defineProperty(e, 'constructor', { value: TypeError2, configurable: true })
-        assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' })
-
-        let called = 0
-        let e2 = new Error('x')
-        Object.defineProperty(e2, 'code', {
-            get() {
-                called++
-                return 'ENOENT'
-            },
-            configurable: true
-        })
-        assert.deepStrictEqual(getBriefErr(e2), { errType: 'Error' })
-        assert.strictEqual(called, 0)
-    })
-
-    it('R18-4 Proxy與陷阱拋錯之值不使其拋錯', function() {
-        let p = new Proxy({}, {
-            getOwnPropertyDescriptor() {
-                throw new Error('trap')
-            },
-            getPrototypeOf() {
-                throw new Error('trap')
-            }
-        })
-        let r = getBriefErr(p)
-        assert.ok(r !== null && typeof r === 'object' && typeof r.errType === 'string')
-        assert.ok(JSON.stringify(r).indexOf('trap') < 0)
-    })
-
-})
-
-
-describe('getCred 與 getSecrets', function() {
-
-    it('R18-5 getCred: 取最後一個@之前為帳密(帳號:第一個冒號前, 密碼:其後), 另補整串寬鬆候選; 非字串或無@者空', function() {
-        assert.deepStrictEqual(getCred(URL), [{ username: USER, password: PW }])
-        assert.deepStrictEqual(getCred('postgresql://u:p@ss@h:1'), [{ username: 'u', password: 'p@ss' }])
-        assert.deepStrictEqual(getCred('postgresql://u:p:q@h:1'), [{ username: 'u', password: 'p:q' }])
-        assert.deepStrictEqual(getCred('postgresql://u@h:1'), [{ username: 'u', password: '' }])
-        assert.deepStrictEqual(getCred('postgresql://:pw@h:1'), [{ username: '', password: 'pw' }])
-        assert.deepStrictEqual(getCred('u:p@h:1'), [{ username: 'u', password: 'p' }])
-        //密碼含/與?: 權限段內之候選(pg實際解析)與整串之寬鬆候選並列
-        let r = getCred('postgresql://u:pa/ss@h:1')
-        assert.ok(r.some((v) => v.password === 'pa/ss'), JSON.stringify(r))
-        assert.deepStrictEqual(getCred('postgresql://h:1'), [])
-        for (let v of [undefined, null, 1, {}, []]) {
-            assert.deepStrictEqual(getCred(v), [])
-        }
-    })
-
-    it('R18-5 畸形網址(權限段之後仍有@, 密碼含未編碼之/?#): pg會把密碼片段解析成主機名/資料庫名而出現在後端錯誤訊息, 各片段亦遮罩; 合格網址不走此路(主機名保留)', function() {
-        let bad = [
-            ['postgresql://tuser:p@S3cretHostPw/rest@127.0.0.1:5432', 'getaddrinfo ENOTFOUND S3cretHostPw', 'S3cretHostPw'],
-            ['postgresql://tuser:p@S3cretHostPw?rest@127.0.0.1:5432', 'getaddrinfo ENOTFOUND S3cretHostPw', 'S3cretHostPw'],
-            ['postgresql://tuser:p@S3cretHostPw#rest@127.0.0.1:5432', 'getaddrinfo ENOTFOUND S3cretHostPw', 'S3cretHostPw'],
-            ['postgresql://tuser:1234/S3cretDbPw@127.0.0.1:5432', 'database "S3cretDbPw@127.0.0.1:5432/worm" does not exist', 'S3cretDbPw'],
-        ]
-        for (let [url, msg, frag] of bad) {
-            let r = cpMask(msg, getSecretsOfUrl(url, `${url}/worm`))
-            assert.ok(r.indexOf(frag) < 0, `${url} -> ${r}`)
-            assert.ok(r.indexOf('***') >= 0)
-        }
-        //合格網址: 帳號、密碼遮罩, 主機名與port保留
-        let ok = 'postgresql://tuser:S3cretPw@db.example.local:5432'
-        assert.strictEqual(cpMask('connect ENOTFOUND db.example.local port 5432 tuser S3cretPw', getSecretsOfUrl(ok, `${ok}/worm`)), 'connect ENOTFOUND db.example.local port 5432 *** ***')
-        assert.deepStrictEqual(getCred(ok), [{ username: 'tuser', password: 'S3cretPw' }])
-    })
-
-    it('R18-5 getSecrets: 略過空值, 含連線字串、帳密、密碼與其URL編碼/解碼、單引號加倍形式, 長者在前', function() {
-        assert.deepStrictEqual(getSecrets('', '', ''), [])
-        assert.deepStrictEqual(getSecrets([], '', ''), [])
-        let ss = getSecrets(URL, USER, PW)
-        for (let v of [URL, USER, PW, `${USER}:${PW}`]) {
-            assert.ok(ss.includes(v), v)
-        }
-        let enc = getSecrets('x://a b:p@ss@h:1', 'a b', 'p@ss')
-        assert.ok(enc.includes(encodeURIComponent('p@ss')))
-        let dec = getSecrets('x://u:p%40ss@h:1', 'u', 'p%40ss')
-        assert.ok(dec.includes('p@ss'), JSON.stringify(dec)) //pg會對帳密decodeURIComponent, 輸出中可能是解碼後之形式
-        let q = getSecrets('x://u:pa\'ss@h:1', 'u', 'pa\'ss')
-        assert.ok(q.includes('pa\'\'ss'), JSON.stringify(q))
-        assert.strictEqual(maskText('SELECT \'pa\'\'ss\' FROM t', q), 'SELECT \'***\' FROM t')
-        for (let k = 1; k < ss.length; k++) {
-            assert.ok(ss[k - 1].length >= ss[k].length)
-        }
-        //帳號單獨出現時至少3字元才遮罩
-        assert.ok(!getSecrets('x://u:pw@h:1', 'u', 'pw').includes('u'))
-        assert.ok(getSecrets('x://usr:pw@h:1', 'usr', 'pw').includes('usr'))
-    })
-
-    it('R18-5 getSecretsOfUrl: 由opt.url與組合後之連線字串推得帳號、密碼、帳密與兩個字串; 無帳密者仍列連線字串', function() {
-        let cs = `${URL}/worm`
-        let ss = getSecretsOfUrl(URL, cs)
-        for (let v of [URL, cs, USER, PW, `${USER}:${PW}`]) {
-            assert.ok(ss.includes(v), v)
-        }
-        let nc = getSecretsOfUrl('postgresql://127.0.0.1:5432', 'postgresql://127.0.0.1:5432/worm')
-        assert.ok(nc.includes('postgresql://127.0.0.1:5432') && nc.every((v) => v !== ''), JSON.stringify(nc))
-        assert.strictEqual(maskText('connect postgresql://127.0.0.1:5432 failed', nc), 'connect *** failed')
-        //url含未編碼之@: 密碼取至最後一個@
-        let at = getSecretsOfUrl('postgresql://u:p@ss@h:1', 'postgresql://u:p@ss@h:1/worm')
-        assert.ok(at.includes('p@ss'))
-        assert.ok(!at.includes('p'), '不得把被@截斷之前半段單獨當密碼(會吞掉無關文字)')
-        //非字串url不拋錯
-        assert.doesNotThrow(() => getSecretsOfUrl(undefined, 'undefined/worm'))
-    })
-
-})
-
-
-describe('maskText', function() {
-
-    it('R18-5 連線字串內嵌之帳密、含@之URL亦遮罩(不依賴已知秘密)', function() {
-        assert.strictEqual(maskText(`a ${URL} b`, getSecretsOfUrl(URL, `${URL}/worm`)), 'a *** b')
-        assert.strictEqual(maskText('connect postgres://who:pw@host:5432/db now', []), 'connect postgres://***@host:5432/db now')
-        assert.strictEqual(maskText('plain text no secret', getSecretsOfUrl(URL, `${URL}/worm`)), 'plain text no secret')
-        assert.strictEqual(maskText(12, getSecretsOfUrl(URL, `${URL}/worm`)), 12)
-    })
-
-    it('R18-5 帳密含未編碼之@時取至最後一個@(不留密碼後半段); 不吞掉其後以空白分隔之文字', function() {
-        assert.strictEqual(maskText('connect postgres://alice:secret@part@host/db', []), 'connect postgres://***@host/db')
-        assert.strictEqual(maskText('see http://example.com:80 and mail me@x.com', []), 'see http://example.com:80 and mail me@x.com')
-    })
-
-})
-
-
-describe('cpMask', function() {
-
-    it('R18-5 不改動原物件, 循環參照與過深/過大結構有界, 函數與二進位以標記字串代替', function() {
-        let a = { name: ID, pw: PW, list: [PW, 1, null, undefined], fn() {}, buf: Buffer.from(PW), d: new Date(0) }
-        a.self = a
-        let deep = { v: PW }
-        let cur = deep
-        for (let k = 0; k < 30; k++) {
-            cur.next = { v: PW }
-            cur = cur.next
-        }
-        a.deep = deep
-        let secrets = getSecretsOfUrl(URL, `${URL}/worm`)
-        let r = cpMask(a, secrets)
-        assert.notStrictEqual(r, a)
-        assert.strictEqual(a.pw, PW)
-        assert.strictEqual(r.name, ID)
-        assert.strictEqual(r.pw, '***')
-        assert.deepStrictEqual(r.list, ['***', 1, null, undefined])
-        assert.strictEqual(r.fn, '[Function]')
-        assert.ok(String(r.buf).startsWith('[Binary'))
-        assert.strictEqual(r.d.getTime(), 0)
-        assert.strictEqual(r.self, r)
-        let n = 0
-        for (let x = r.deep; typeof x === 'object' && x !== null; x = x.next) {
-            n++
-            assert.ok(JSON.stringify(x.v).indexOf(PW) < 0)
-        }
-        assert.ok(n < 30, `過深結構未截斷: ${n}`)
-        assert.ok(JSON.stringify(r, (k, v) => (k === 'self' ? undefined : v)).indexOf(PW) < 0)
-    })
-
-    it('R18-5 Error之副本仍為Error: message、stack、cause、自有屬性皆遮罩', function() {
-        let e = new Error(`m ${PW}`, { cause: new Error(`c ${PW}`) })
-        e.extra = `x ${PW}`
-        let r = cpMask(e, getSecretsOfUrl(URL, `${URL}/worm`))
-        assert.ok(r instanceof Error)
-        assert.strictEqual(r.message, 'm ***')
-        assert.ok(typeof r.stack === 'string' && r.stack.indexOf(PW) < 0 && r.stack.indexOf('m ***') >= 0)
-        assert.strictEqual(r.cause.message, 'c ***')
-        assert.strictEqual(r.extra, 'x ***')
-        assert.strictEqual(e.message, `m ${PW}`)
-    })
-
-    it('R18-5 密碼含多個@: 密碼原文與含該密碼之連線字串皆遮罩(不留後半段)', function() {
-        let url = 'postgresql://tuser:Zp@ss7@db.example.local:5432'
-        let secrets = getSecretsOfUrl(url, `${url}/worm`)
-        let r = cpMask({ m: `connect ${url}/worm failed`, n: 'pw Zp@ss7 here', o: 'half ss7@db' }, secrets)
-        let s = JSON.stringify(r)
-        assert.ok(s.indexOf('Zp@ss7') < 0 && s.indexOf('tuser:') < 0, s)
-        assert.strictEqual(r.n, 'pw *** here')
-        assert.ok(r.m.indexOf('Zp') < 0 && r.m.indexOf('ss7') < 0, r.m) //RE_URL_CRED 兜底: 取至最後一個@
-    })
-
-    it('R18-5 單引號: 密碼含單引號時, SQL字串字面值形式(單引號加倍)亦遮罩', function() {
-        let url = 'postgresql://tuser:pa\'ss9@h:5432'
-        let secrets = getSecretsOfUrl(url, `${url}/worm`)
-        let r = cpMask(`SELECT 'pa''ss9' , 'pa'ss9'`, secrets)
-        assert.ok(r.indexOf('pa\'\'ss9') < 0 && r.indexOf('ss9') < 0, r)
-    })
-
-    it('R18-5 URL編碼/解碼: 密碼以百分比編碼寫入url時, 編碼形式與pg解碼後之形式皆遮罩', function() {
-        let url = 'postgresql://tuser:p%40ss%2F9@h:5432'
-        let secrets = getSecretsOfUrl(url, `${url}/worm`)
-        let r = cpMask({ a: 'p%40ss%2F9', b: 'p@ss/9', c: 'x p@ss/9 y' }, secrets)
-        assert.strictEqual(JSON.stringify(r).indexOf('ss'), -1, JSON.stringify(r))
-    })
-
-    it('R18-5 屬性鍵與Symbol描述含憑證者亦遮罩', function() {
-        let e = new Error('x')
-        e[PW] = 'v'
-        e[Symbol(PW)] = 'w'
-        e[Symbol('plain')] = 'z'
-        let r = cpMask(e, getSecretsOfUrl(URL, `${URL}/worm`))
-        let keys = Reflect.ownKeys(r).map((k) => String(k))
-        assert.ok(keys.every((k) => k.indexOf(PW) < 0), keys.join('|'))
-        assert.ok(keys.includes('***') && keys.includes('Symbol(***)') && keys.includes('Symbol(plain)'), keys.join('|'))
-    })
-
-    it('R18-5 數字密碼: 至少4位之數字密碼, 同值之number與bigint與字串皆遮罩; 過短者不遮罩; 摘要之數值亦同', function() {
-        let url = 'postgresql://u:12345@h:5432'
-        let secrets = getSecretsOfUrl(url, `${url}/worm`)
-        let r2 = cpMask({ password: 12345, count: 7, big: 12345n, s: '12345', arr: [12345, 54321] }, secrets)
-        assert.deepStrictEqual(r2, { password: '***', count: 7, big: '***', s: '***', arr: ['***', 54321] })
-        let short = getSecretsOfUrl('postgresql://u:123@h:5432', 'postgresql://u:123@h:5432/worm')
-        assert.deepStrictEqual(cpMask({ n: 123, s: '123' }, short), { n: 123, s: '***' })
-    })
-
-    it('R18-5 副本不沿用原型: 繼承屬性不外帶, 繼承之util.inspect.custom不被執行; Error之name取原型鏈上之資料屬性', function() {
-        class MyErr extends Error {}
-        MyErr.prototype.token = PW
-        MyErr.prototype.name = 'MyErrName'
-        MyErr.prototype[Symbol.for('nodejs.util.inspect.custom')] = () => `PW=${PW}`
-        let secrets = getSecretsOfUrl(URL, `${URL}/worm`)
-        let r = cpMask(new MyErr('m'), secrets)
-        assert.ok(r instanceof Error)
-        assert.strictEqual(r.token, undefined)
-        assert.strictEqual(r.name, 'MyErrName')
-        assert.ok(!util.inspect(r).includes(PW), util.inspect(r))
-        class Foo {
-            constructor() {
-                this.a = 1
-            }
-        }
-        Foo.prototype.b = PW
-        Foo.prototype[Symbol.for('nodejs.util.inspect.custom')] = () => `PW=${PW}`
-        let r2 = cpMask(new Foo(), secrets)
-        assert.deepStrictEqual(r2, { a: 1 })
-        assert.ok(!util.inspect(r2).includes(PW))
-    })
-
-    it('R18-4 不執行使用端程式: Symbol.toStringTag之getter、自訂stack與message存取器皆不被執行', function() {
-        let called = []
-        let e = new Error('m')
-        Object.defineProperty(e, Symbol.toStringTag, {
-            get() {
-                called.push('tag')
-                return 'Error'
-            }
-        })
-        Object.defineProperty(e, 'stack', {
-            get() {
-                called.push('stack')
-                return `stack ${PW}`
-            },
-            configurable: true
-        })
-        Object.defineProperty(e, 'message', {
-            get() {
-                called.push('message')
-                return `msg ${PW}`
-            },
-            configurable: true
-        })
-        let r = cpMask(e, getSecretsOfUrl(URL, `${URL}/worm`))
-        assert.ok(r instanceof Error)
-        assert.deepStrictEqual(called, [])
-        assert.ok(!util.inspect(r).includes(PW))
-        assert.deepStrictEqual(getBriefErr(e), { errType: 'Error' })
-        assert.deepStrictEqual(called, [])
-    })
-
-    it('R18-4 getter不被執行(以標記字串代替), 拋錯之getter不使其拋錯', function() {
-        let called = 0
-        let o = {
-            get a() {
-                called++
-                return PW
-            },
-            b: 1
-        }
-        let r = cpMask(o, getSecretsOfUrl(URL, `${URL}/worm`))
-        assert.strictEqual(called, 0)
-        assert.strictEqual(r.a, '[Getter/Setter]')
-        assert.strictEqual(r.b, 1)
-    })
-
-})
-
-
-describe('遮罩之補強(外審 B-1~B-8)', function() {
-
-    let STD = 'postgresql://tuser:S3cretPw@db.example.local:5432'
-    let sec = () => getSecretsOfUrl(STD, `${STD}/worm`)
-    let dump = (v) => util.inspect(v, { depth: 10, showHidden: true })
-
-    it('R18-5 Symbol作為值(屬性值、陣列元素、直接拋出)亦遮罩其描述', function() {
-        let r = cpMask({ tok: Symbol(PW), urlSym: Symbol(STD), arr: [Symbol(PW)] }, sec())
-        assert.ok(dump(r).indexOf(PW) < 0, dump(r))
-        assert.ok(dump(r).indexOf('Symbol(***)') >= 0, dump(r))
-        assert.strictEqual(cpMask(Symbol(PW), sec()).description, '***')
-        assert.strictEqual(cpMask(Symbol('plain'), sec()).description, 'plain')
-        assert.strictEqual(cpMask(Symbol(undefined), sec()).description, undefined)
-    })
-
-    it('R18-5 陣列之自有非索引鍵與Symbol鍵亦遮罩; 索引鍵原樣保留', function() {
-        let arr = ['ok', PW]
-        arr[PW] = 'v1'
-        arr[`k_${STD}`] = 'v2'
-        arr[Symbol(PW)] = 'v3'
-        arr.plain = 'v4'
-        let r = cpMask(arr, sec())
-        assert.ok(dump(r).indexOf(PW) < 0, dump(r))
-        assert.ok(Array.isArray(r) && r[0] === 'ok' && r[1] === '***' && r.length === 2)
-        assert.strictEqual(r.plain, 'v4')
-        assert.strictEqual(r['***'], 'v1')
-    })
-
-    /* eslint-disable no-new-wrappers */
-    it('R18-5 包裝物件(new String/Number/Boolean/Object(Symbol)/Object(1n))取其內部原始值遮罩, 不逐字元攤開', function() {
-        let r = cpMask({ s: new String(`conn=${STD} pw=${PW}`), n: new Number(1), b: new Boolean(false), y: Object(Symbol(PW)), g: Object(12345n) }, sec())
-        assert.ok(dump(r).indexOf(PW) < 0, dump(r))
-        assert.strictEqual(r.s, 'conn=*** pw=***')
-        assert.strictEqual(r.n, 1)
-        assert.strictEqual(r.b, false)
-        assert.strictEqual(r.y.description, '***')
-        let nums = getSecretsOfUrl('postgresql://u:12345@h:1', 'postgresql://u:12345@h:1/worm')
-        assert.deepStrictEqual(cpMask({ n: new Number(12345), g: Object(12345n), s: new String('12345') }, nums), { n: '***', g: '***', s: '***' })
-    })
-    /* eslint-enable no-new-wrappers */
-
-    it('R18-5 Map、Set、RegExp、Promise內含憑證者不展開, 以標記字串代替(內容不外洩)', function() {
-        let r = cpMask({ m: new Map([[PW, STD]]), s: new Set([PW]), re: new RegExp(PW), p: Promise.resolve(PW) }, sec())
-        assert.deepStrictEqual(r, { m: '[Object]', s: '[Object]', re: '[Object]', p: '[Object]' })
-    })
-
-    it('R18-5 查詢參數帶帳密(?user=…&password=…): url與錯誤訊息中之原樣、URL編碼與+空白形式皆遮罩', function() {
-        let u = 'postgresql://db.example.local:5432?user=tuser&password=S3cret%2BPw+9'
-        let ss = getSecretsOfUrl(u, `${u}/worm`)
-        let r = cpMask({ a: 'auth failed password=S3cret%2BPw+9 user=tuser', b: 'pw is S3cret+Pw 9', c: 'u=tuser' }, ss)
-        let s = JSON.stringify(r)
-        assert.ok(s.indexOf('S3cret') < 0 && s.indexOf('tuser') < 0, s)
-        assert.deepStrictEqual(getCred('postgresql://h:1?x=1&user=a&password=b#f'), [{ username: 'a', password: 'b' }])
-        assert.ok(getCred('postgresql://h:1?user=a%20b&password=c+d').some((v) => v.username === 'a b' && v.password === 'c d'))
-    })
-
-    it('R18-5 編碼形式: 解碼後單引號加倍、URL編碼大小寫十六進位、WHATWG URL儲存之編碼形式、JSON跳脫形式皆遮罩', function() {
+    it('R18-4 訂閱函數拋出非Error值(字串含url、數值、null、undefined、物件、Symbol): 預設只列型別(不執行其程式、不洩漏)', async function() {
         let cases = [
-            ['postgresql://tuser:pa%27ss9@db.example.local:5432', 'SELECT \'pa\'\'ss9\'', 'ss9'],
-            ['postgresql://tuser:S3cret%2fpw@db.example.local:5432', 'pw=S3cret%2Fpw', 'S3cret'],
-            ['postgresql://tuser:S3cret/pw@db.example.local:5432', 'pw=S3cret%2fpw', 'S3cret'],
-            ['postgresql://tuser:pa\'ss9@db.example.local:5432', 'pw=pa%27ss9', 'ss9'],
-            ['postgresql://tuser:S3cret+Pw 9@db.example.local:5432', 'pw=S3cret+Pw%209', 'S3cret'],
-            ['postgresql://tuser:Sec ret+Pw@db.example.local:5432', 'pw=Sec%20ret%2bPw', 'Sec'], //小寫十六進位(encodeURIComponent只產大寫)
-            ['postgresql://tuser:Sec ret+Pw@db.example.local:5432', 'pw=Sec%20ret%2BPw', 'Sec'],
-            ['postgresql://tuser:pa%22ss%5C9@db.example.local:5432', JSON.stringify({ pw: 'pa"ss\\9' }), 'ss'],
+            [`str ${urlOf()}/app ${USER}:${PW} ${ID}`, 'string'],
+            [12345, 'number'],
+            [null, 'null'],
+            [undefined, 'undefined'],
+            [{ message: ID, code: ID, url: urlOf() }, 'object'],
+            [Symbol(`${ID} ${PW}`), 'symbol'],
         ]
-        for (let [u, text, frag] of cases) {
-            let r = maskText(text, getSecretsOfUrl(u, `${u}/worm`))
-            assert.ok(r.indexOf(frag) < 0, `${u} :: ${text} -> ${r}`)
+        for (let [v, errType] of cases) {
+            let { lines } = await cap(() => fire(build(fakeOf()), v))
+            assert.deepStrictEqual(lines, [`error handler threw { mode: 'createTable', errType: '${errType}' }`], errType)
         }
     })
 
-    it('R18-5 首尾重疊之秘密: 相交之命中區間合併後一次取代, 不留可還原的片段', function() {
-        let u = 'postgresql://my_app_user_prod:prod_S3cret9@db.example.local:5432'
-        let r = maskText('key=my_app_user_prod_S3cret9', getSecretsOfUrl(u, `${u}/worm`))
-        assert.strictEqual(r, 'key=***')
-        assert.strictEqual(maskText('aXbXc', ['X']), 'a***b***c')
-        assert.strictEqual(maskText('xabcabcx', ['abcabc', 'cab']), 'x***x')
-        assert.strictEqual(maskText('no hit', ['zz']), 'no hit')
-        assert.strictEqual(maskText('aaa', ['aa']), '***')
-    })
-
-    it('R18-4 二進位資料以內建getter取長度: 使用端覆寫byteLength(存取器或資料屬性)不被執行、不外洩', function() {
-        let called = 0
-        let buf = Buffer.from('abcd')
-        Object.defineProperty(buf, 'byteLength', {
-            get() {
-                called++
-                return PW
-            }
+    it('R18-1 無拋錯之訂閱函數: 成功與失敗之操作皆無任何console輸出', async function() {
+        let { lines } = await cap(async () => {
+            let w = build(fakeOf())
+            await w.insert({ id: 'a', v: 1 })
+            await w.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+            let w2 = build(fakeOf({ conn: () => new Error('x') }))
+            await w2.select({}).catch(() => {})
         })
-        let buf2 = Buffer.from('abcd')
-        Object.defineProperty(buf2, 'byteLength', { value: PW })
-        let r = cpMask({ buf, buf2, u8: new Uint8Array(3), ab: new ArrayBuffer(5), dv: new DataView(new ArrayBuffer(2)) }, sec())
-        assert.strictEqual(called, 0)
-        assert.deepStrictEqual(r, { buf: '[Binary 4 bytes]', buf2: '[Binary 4 bytes]', u8: '[Binary 3 bytes]', ab: '[Binary 5 bytes]', dv: '[Binary 2 bytes]' })
-    })
-
-    it('R18-4 讀stack不執行使用端程式: 實例上自訂name/message存取器、原型上的存取器、掛上Error.prepareStackTrace皆不被執行', function() {
-        let called = []
-        let e = new Error('init')
-        Object.defineProperty(e, 'name', {
-            get() {
-                called.push('name')
-                return 'CustomName'
-            }
-        })
-        Object.defineProperty(e, 'message', {
-            get() {
-                called.push('message')
-                return `msg ${PW}`
-            }
-        })
-        let r = cpMask(e, sec())
-        assert.deepStrictEqual(called, [])
-        assert.ok(r instanceof Error && dump(r).indexOf(PW) < 0)
-
-        class E2 extends Error {
-            get message() {
-                called.push('proto-message')
-                return PW
-            }
-        }
-        cpMask(new E2('x'), sec())
-        assert.deepStrictEqual(called, [])
-
-        //原生Error仍保有stack(讀取不會執行使用端程式時)
-        let plain = cpMask(new Error(`m ${PW}`), sec())
-        assert.ok(typeof plain.stack === 'string' && plain.stack.indexOf('m ***') >= 0 && plain.stack.indexOf(PW) < 0)
-
-        //Error.prepareStackTrace被使用端掛上: 載入後才掛的函數不得被執行(stack以標記字串代替)
-        let old = Object.getOwnPropertyDescriptor(Error, 'prepareStackTrace')
-        Error.prepareStackTrace = () => {
-            called.push('prepare')
-            return 'x'
-        }
-        try {
-            let r2 = cpMask(new Error(`m ${PW}`), sec())
-            assert.deepStrictEqual(called, [])
-            assert.strictEqual(r2.stack, '[Getter/Setter]')
-        }
-        finally {
-            if (old === undefined) {
-                delete Error.prepareStackTrace
-            }
-            else {
-                Object.defineProperty(Error, 'prepareStackTrace', old)
-            }
-        }
+        assert.deepStrictEqual(lines, [])
     })
 
 })
 
 
-describe('單一出口(R18-7)', function() {
+describe('連線憑證之遮罩接線(R18-5): 本套件宣告之秘密來源(opt.url與組成之連線字串)', function() {
+
+    let textOf = (v) => util.inspect(v, { depth: null, showHidden: true })
+
+    //detailOf, 以funLog取得訂閱函數拋出value時之detail(error事件站)
+    let detailOf = async (url, value, ex = {}) => {
+        let got = []
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a), ...ex }, { url })
+        await fire(w, value)
+        return got[0][2]
+    }
+
+    it('url之帳號與密碼、帳號:密碼、url與url/db之整串皆遮罩', async function() {
+        let url = urlOf('Pw9xQz7k')
+        let d = await detailOf(url, new Error(`a Pw9xQz7k b ${USER}:Pw9xQz7k c ${url}/app d ${url} e`))
+        assert.strictEqual(d.message, 'a *** b *** c *** d *** e')
+    })
+
+    it('密碼以百分比編碼寫入url: 編碼形式與解碼後之形式皆遮罩', async function() {
+        let url = `postgresql://${USER}:p%40ss%2Fw0rd%3Fx@db.example.com:5432`
+        let d = await detailOf(url, new Error('dec p@ss/w0rd?x enc p%40ss%2Fw0rd%3Fx lower p%40ss%2fw0rd%3fx end'))
+        assert.strictEqual(d.message, 'dec *** enc *** lower *** end')
+    })
+
+    it('畸形網址(密碼含未編碼之@與/): 驅動把片段當主機名或資料庫名, 其片段亦遮罩(診斷輸出與對外reject皆是)', async function() {
+        let url = `postgresql://${USER}:p@S3cretHostPw/rest@127.0.0.1:1`
+        let d = await detailOf(url, new Error('getaddrinfo ENOTFOUND S3cretHostPw and rest'))
+        assert.ok(d.message.indexOf('S3cretHostPw') < 0, d.message)
+        let e = Object.assign(new Error('getaddrinfo ENOTFOUND S3cretHostPw'), { code: 'ENOTFOUND', hostname: 'S3cretHostPw' })
+        let r = await runOp(build(fakeOf({ conn: () => e }), {}, { url }), (w) => w.select({}))
+        assert.ok(r.rej.message.indexOf('S3cretHostPw') < 0 && r.rej.hostname.indexOf('S3cretHostPw') < 0, textOf(r.rej))
+        assert.strictEqual(r.rej.code, 'ENOTFOUND')
+        assert.strictEqual(r.evs[0].e.indexOf('S3cretHostPw'), -1, r.evs[0].e)
+    })
+
+    it('查詢參數帶帳密(?user=&password=): 原樣與解碼形式皆遮罩', async function() {
+        let url = `postgresql://db.example.com:5432?user=qa_user&password=Qp%40ss%2B1`
+        let d = await detailOf(url, new Error('p Qp@ss+1 q Qp%40ss%2B1 r'))
+        assert.strictEqual(d.message, 'p *** q *** r')
+    })
+
+    it('url密碼為純數字: 字串、數值、bigint同值皆遮罩(診斷輸出); 數值型之錯誤代碼不進摘要', async function() {
+        let url = `postgresql://numuser:123456@127.0.0.1:1`
+        let got = []
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a) }, { url })
+        let e = Object.assign(new Error('listener 123456 numuser'), { code: 123456, n: 123456, b: 123456n })
+        await fire(w, e)
+        assert.deepStrictEqual(got[0][1], { mode: 'createTable', errType: 'Error' })
+        assert.strictEqual(got[0][2].message, 'listener *** ***')
+        assert.strictEqual(got[0][2].n, '***')
+        assert.strictEqual(got[0][2].b, '***')
+        assert.strictEqual(got[0][2].code, '***')
+    })
+
+    it('預設url(未給opt.url: postgresql://user:password@127.0.0.1:5432)之帳號與密碼二字於診斷輸出遮罩', async function() {
+        let got = []
+        let old = pg.Client
+        pg.Client = fakeOf()
+        let w = null
+        try {
+            w = WOrm({ funLog: (...a) => got.push(a) })
+        }
+        finally {
+            pg.Client = old
+        }
+        await fire(w, new Error('a user b password c'))
+        assert.strictEqual(got[0][2].message, 'a *** b *** c')
+    })
+
+})
+
+
+describe('單一出口與站點盤點(R18-7、R-DIAG-01)', function() {
 
     //codeLines, 去除區塊註解、字串字面值與單行註解後逐行回傳(字串內含//如網址時不致把同行後方的程式碼誤當註解而漏掃)
     let codeLines = (src) => {
@@ -808,17 +474,31 @@ describe('單一出口(R18-7)', function() {
         return s.split(/\r?\n/).map((line) => line.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, '""').replace(/\/\/.*$/, ''))
     }
     let reOut = /\b(?:globalThis\s*\.\s*)?console\s*[.[]|\bprocess\s*\.\s*(?:stdout|stderr|emitWarning)\b|\bprocess\s*\[/
+    let srcOf = (f) => fs.readFileSync(`./src/${f}`, 'utf8')
+    let mainCode = () => codeLines(srcOf('WOrmPostgresql.mjs'))
+    let count = (re) => mainCode().filter((l) => re.test(l)).length
 
-    it('R18-7 src內除getDiag.mjs外不得直接呼叫console或寫process.stdout/stderr/emitWarning(所有診斷輸出經單一出口)', function() {
+    it('R18-7 本套件不再自寫診斷輸出: src/getDiag.mjs已刪, 只由wsemi引入getDiag與getDiagSecrets', function() {
+        assert.ok(!fs.existsSync('./src/getDiag.mjs'))
+        for (let f of fs.readdirSync('./src')) {
+            assert.ok(!/^getDiag/.test(f), f)
+        }
+        let src = srcOf('WOrmPostgresql.mjs')
+        assert.ok(/import getDiag from 'wsemi\/src\/getDiag\.mjs'/.test(src))
+        assert.ok(/import getDiagSecrets from 'wsemi\/src\/getDiagSecrets\.mjs'/.test(src))
+        assert.ok(!/maskText|cpMask|getOptLog|getSecretsOfUrl|getBriefErr|\.\/getDiag/.test(codeLines(src).join('\n')), '不得殘留自寫遮罩函數之引用')
+    })
+
+    it('R18-7 src內任何檔皆不得直接呼叫console或寫process.stdout/stderr/emitWarning(所有診斷輸出經wsemi之getDiag)', function() {
         let bads = []
         let n = 0
         for (let f of fs.readdirSync('./src')) {
-            if (!/\.(mjs|js)$/.test(f) || f === 'getDiag.mjs') {
+            if (!/\.(mjs|js)$/.test(f)) {
                 continue
             }
             n++
-            let raw = fs.readFileSync(`./src/${f}`, 'utf8').split(/\r?\n/)
-            codeLines(fs.readFileSync(`./src/${f}`, 'utf8')).forEach((code, k) => {
+            let raw = srcOf(f).split(/\r?\n/)
+            codeLines(srcOf(f)).forEach((code, k) => {
                 if (reOut.test(code)) {
                     bads.push(`${f}:${k + 1} ${raw[k].trim().slice(0, 80)}`)
                 }
@@ -840,10 +520,50 @@ describe('單一出口(R18-7)', function() {
         assert.ok(!hit('let s = \'console.log(1)\''))
     })
 
-    it('R18-7 getDiag.mjs內console站點恰4處且皆為console.log(預設與logDetail各一, 其兜底各一; 新增站點須先審其是否經遮罩)', function() {
-        let lines = codeLines(fs.readFileSync('./src/getDiag.mjs', 'utf8')).filter((line) => /\bconsole\s*\./.test(line))
-        assert.strictEqual(lines.length, 4, lines.join('\n'))
-        assert.ok(lines.every((v) => /console\.log\(/.test(v)))
+    it('R-DIAG-01 diag(站點恰2處: label為字串字面值、safe只含mode與diag.brief展開; 不傳bare等舊參數(第4參數level不用, 預設stdout))', function() {
+        let src = srcOf('WOrmPostgresql.mjs')
+        let ms = [...src.matchAll(/^\s*diag\('([^']+)', ([^\n]*)\)\s*$/gm)]
+        assert.deepStrictEqual(ms.map((m) => m[1]), ['change handler threw', 'error handler threw'])
+        for (let m of ms) {
+            assert.strictEqual(m[2], '{ mode, ...diag.brief(errEmit) }, () => errEmit', '呼叫點之safe與getDetail形狀')
+        }
+        assert.strictEqual(count(/\bdiag\(/), 2, 'diag(站點須恰2處, 新增者先審label與safe是否為固定詞彙並補規則帳本站點表')
+    })
+
+    it('R-DIAG-01 本套件之宣告: secrets來源為opt.url與組成之連線字串, codes為sqlstate, types為DatabaseError, safeKeys為mode', function() {
+        let src = srcOf('WOrmPostgresql.mjs')
+        for (let s of ['getDiagSecrets({ urls: [url, connectionString] })', 'codes: [\'sqlstate\']', 'types: [\'DatabaseError\']', 'safeKeys: [\'mode\']']) {
+            assert.ok(src.indexOf(s) >= 0, `缺宣告: ${s}`)
+        }
+    })
+
+    it('R-DIAG-01 驅動呼叫之單一接縫: new PgClient、client.connect、client.query、client.end各恰1處(pgClient、pgConnect、pgRun、pgEnd內); diag.err恰9處(接縫4、cloneDeep之catch 4、createTable讀樣本1), 無diag.mask(逐筆err與事件之訊息皆源自接縫)', function() {
+        assert.strictEqual(count(/new PgClient\(/), 1)
+        assert.strictEqual(count(/\bclient\.connect\(/), 1)
+        assert.strictEqual(count(/\bclient\.query\(/), 1)
+        assert.strictEqual(count(/\bclient\.end\(/), 1)
+        let lines = mainCode()
+        let idx = (re) => lines.findIndex((l) => re.test(l))
+        //四個接縫函數: 驅動呼叫與其後之diag.err在同一個函數內
+        for (let [fn, call] of [['pgClient', /new PgClient\(/], ['pgConnect', /client\.connect\(/], ['pgRun', /client\.query\(/], ['pgEnd', /client\.end\(/]]) {
+            let a = idx(new RegExp(`\\bfunction ${fn}\\(`))
+            let b = idx(call)
+            assert.ok(a >= 0 && b > a && b - a <= 4, `${fn}之驅動呼叫應緊接於函數開頭`)
+            assert.ok(/diag\.err\(err\)/.test(lines.slice(b, b + 5).join('\n')), `${fn}之catch須經diag.err`)
+        }
+        assert.strictEqual(count(/\bdiag\.err\(/), 9)
+        assert.strictEqual(count(/\bdiag\.mask\(/), 0)
+    })
+
+    it('R-DIAG-01 reject站點盤點: Promise.reject恰28處(createTable 3、select 4、selectByPk 2、insert 4、insertBulk 4、save 4、del 3、delAll 4); 新增者須先判定外來值或固定詞彙並補規則帳本站點表', function() {
+        assert.strictEqual(count(/\bPromise\.reject\(/), 28)
+        //各操作之Promise.reject數(以function宣告區段分段)
+        let lines = mainCode()
+        let names = ['createTable', 'select', 'selectByPk', 'insert', 'insertBulk', 'save', 'del', 'delAll']
+        let starts = names.map((n) => lines.findIndex((l) => new RegExp(`^\\s*async function ${n}\\(`).test(l)))
+        assert.ok(starts.every((s) => s >= 0), starts.join())
+        let got = names.map((n, i) => lines.slice(starts[i], i + 1 < names.length ? starts[i + 1] : lines.length).filter((l) => /\bPromise\.reject\(/.test(l)).length)
+        assert.deepStrictEqual(got, [3, 4, 2, 4, 4, 4, 3, 4])
     })
 
 })
@@ -879,7 +599,7 @@ describe('建構函式訊息不回顯連線網址與帳密(R18-8)', function() {
         for (let [ex, msg] of cases) {
             let err = null
             try {
-                WOrm({ url: URL, ...ex })
+                WOrm({ url: urlOf(), ...ex })
             }
             catch (e) {
                 err = e
@@ -890,12 +610,11 @@ describe('建構函式訊息不回顯連線網址與帳密(R18-8)', function() {
         }
     })
 
-    it('R18-8 合格之url(含帳密)建構成功, logDetail與funLog選項型別不合者不使建構拋錯', function() {
+    it('R18-8 合格之url(含帳密)建構成功, logDetail與funLog選項型別不合者不使建構拋錯; opt本身不是物件亦不拋錯', function() {
         for (let ex of [{}, { logDetail: true }, { logDetail: 'x' }, { funLog: () => {} }, { funLog: 'x' }, { logDetail: 1, funLog: {} }]) {
-            let w = WOrm({ url: URL, db: 'worm', cl: 't', ...ex })
+            let w = WOrm({ url: urlOf(), db: 'worm', cl: 't', ...ex })
             assert.strictEqual(typeof w.select, 'function')
         }
-        //opt本身不是物件亦不拋錯(沿用既有行為: 以預設值建構)
         assert.doesNotThrow(() => WOrm(null))
         assert.doesNotThrow(() => WOrm(5))
     })

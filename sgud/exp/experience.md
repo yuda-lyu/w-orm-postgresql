@@ -2,6 +2,19 @@
 
 本檔為執行工作時特有之累積經驗,留給後續之嘗試、執行與判斷,由agent自行編列、擴充與維護.
 
+## 第 161 項 mig-pg(遷移到 wsemi 共用診斷模組 wsemi ≥ 1.9.31,2026-10-29 19:17 起;產物在 `tmp/mig-pg/`:`red/`〔HEAD src 副本+新測試〕、`mutate.mjs`、`perf.mjs`;證據複本在任務夾 `agent-out/mig-pg-evidence/`)
+
+- **順序(有效)**:先讀 dspec 與設計 §4.1、§6 → `npm i wsemi@latest` → 刪自製 `getDiag.mjs`、改 src(只動 2 個診斷站點與驅動呼叫)→ 假驅動單元測試(`test/tools/fakePg.mjs`)→ 對 HEAD 副本取修前紅 → 真驅動 api 測試 → 變異 → 文件.全套 `npm test` 只要約 2 分鐘(3773 案),不必背景等待.
+- **本套件之對外錯誤值遮罩採「驅動呼叫之單一接縫」而非逐 catch 站點**(`pgClient`、`pgConnect`、`pgRun`、`pgEnd` 內 `throw diag.err(err)`):各操作之後端錯誤出口有 ≥ 25 處(`Promise.reject`、`.catch((err) => err.message)` 之逐筆 err、`emitError` 之訊息引數),但**混合 catch**(同一 try 內有驅動呼叫與本套件自身之固定詞彙 throw,如 `selectByPk` 之 `can not select by pk[…]`)若逐 catch 包 `diag.err` 就會把固定詞彙一併遮罩(密碼恰為其子字串即切碎).於接縫遮罩使「外來值」之界線與程式結構一致,新增驅動呼叫只要走接縫即不會漏;`unit-diaglog` 以掃描鎖住 `client.query(` 等恰 1 處.使用端存取器/Proxy/`toString` 拋出之值(`cloneDeep`、`createTable` 讀樣本)為另一類外來值,逐站包;`createTable` 之驗證 catch 內自身與外來混雜,以 `ours`(WeakSet,`ownErr` 登記,同 `cvFind.mjs` 之 `ours`)區分.
+- **接縫改成 `async` 函數後 `client.query(...)` 同步拋出會變成 reject**(`.then().catch()` 鏈上由逐筆 catch 接住,而非外層 catch);pg 之 `Client.query` 不同步拋,實務無差,但屬行為細節.
+- **含憑證之 reject 用真驅動造法**:①畸形網址(密碼含 `@` 後接未編碼 `/`)→ `getaddrinfo ENOTFOUND <片段>`(PG-R3;片段用 `.invalid` 結尾使解析即時失敗,不然每次等 DNS 約 2.7 秒);②**後端回顯資料值**:把資料值設成等於連線密碼(容器 url 密碼為 `password`),INTEGER 欄寫入或比較 `'password'` → `invalid input syntax for type integer: "password"`(22P02);`createTable` 表名取密碼,第二次建表之 `relation "password" already exists`;`del`/`save` 逐筆 err 同理.錯誤密碼之後端訊息**不**回顯密碼.
+- **假驅動測試**:`WOrmPostgresql` 於建構時讀 `pg.Client`(`let PgClient = pg.Client`),測試於建構期間暫時換入假類別、建構後還原,即可逐階段(`new`、`connect`、`query`〔依語句文字分流〕、`end`)觸發任意值之拋出/reject,不需 docker.注意 `{ ...ex }` 展開會執行 opt 之 getter,測選項 getter/快照要用原樣傳入之 `buildRaw`.
+- **wsemi 語料接線**:`_diagCases.mjs` 之 `wire:true` 案共 20 案;用 `DISPOSITION` 表逐案處置(detail+reject / adapt / n/a),並以「分類完整」案防日後 wsemi 新增 wire 案而本套件漏接.語料案之期望形狀多為其 `call()` 之回傳形狀,接線版要自行轉成對應形狀(例 R12 之 `{ e, r, c }`)或另寫等價斷言.R02(畸形網址片段)語料宣告 2 個 url 來源而本套件之 `opt.url` 只有 1 個,改以自建等價案與真驅動案.
+- **真驅動 `DatabaseError` 實例自帶 `name = 'error'`**:wsemi 之類別名規則優先取實例 `name`(字串資料屬性且非 `Error`),故宣告 `types: ['DatabaseError']` 對真驅動錯誤不生效(`errType` 為 `Error`,舊自製版取建構子名為 `DatabaseError`).測試以「類別名為 `DatabaseError` 且未改寫 `name` 之類別」驗證宣告有接上,並於 `api-diaglog` 對真錯誤只斷言 `errCode`;已列 `建議wsemi修正.md`.
+- **變異結果判讀**:64 個全殺,其中 1 個僅由盤點掃描殺死(ROLLBACK 之 reject 被 `.catch(() => {})` 吞下,行為等價);api 層(挑 8 個)單獨只殺 5/8(真驅動難造 BEGIN/`end` 失敗與 createTable 之固定詞彙路徑),其餘由 unit 層之假驅動殺死——**兩層缺一不可**:真驅動證明接線在真實錯誤形態下成立,假驅動證明每個站點各自有測試.「盤點掃描殺死」之變異要另標,因為它不證明行為有測試(先補行為測試:BEGIN 失敗、語句核對失敗之固定詞彙案).
+- **eslint**:新測試之物件字面值多屬性同行會報 `object-property-newline`/`object-curly-newline`,以 `npx eslint --fix <新測試檔>` 修(只動自己新寫之檔);測試標題字串含 `${…}` 會報 `no-template-curly-in-string`,改寫標題.
+- **工具陷阱**:Bash 傳 `decision-log.mjs` 之任務夾路徑要用正斜線(`C:/opensrcOper/dnow/…`),反斜線被 bash 吃掉而回「任務資料夾不存在」;守門 hook 擋 `cd`,一律絕對路徑或 `--cwd`.
+
 ## 第 153 項 pg-run01(診斷輸出單一出口,2026-10-28 08:21 起;產物在 `tmp/pg-run01/`:`head/`〔HEAD src 副本〕、`gen-golden.mjs`、`mutate.mjs`、`review/`、`review-dispatch/`)
 
 - **順序(有效)**:讀全域規範/任務/reladb 與 w-serv-orm 之 `getDiag.mjs` 與其報告(遮罩漏洞清單)→ 盤點站點(`git grep` HEAD、node_modules 實讀)→ **在改 src 之前**用 HEAD 產生 golden(`diagGolden.json`)→ 才寫 `getDiag.mjs` 與接線 → 單元/API 測試 → 修前紅(HEAD 副本跑新測試)→ 變異 → 外審 → 文件.golden 之情境要先定稿(事件與結算先後的 `['done', i]` 標記是第二次產生時才補,補了就得再用 HEAD 副本重產,所以 `gen-golden.mjs` 接受 src 路徑參數).

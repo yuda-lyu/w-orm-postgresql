@@ -2,7 +2,7 @@
 
 本檔記當前已開發功能之最新狀態(各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證),**只記現況、不寫過程**(過程寫入 `sgud/exp/experience.md`);藍圖(程式碼須長成什麼樣)在 `sgud/rule/rulebook.md`.接續工作先讀本檔.
 
-- 套件:`w-orm-postgresql`,`package.json` 版本 1.0.36(版本號與發布由主控處理,本檔不記發布).
+- 套件:`w-orm-postgresql`,`package.json` 版本 1.0.37(版本號與發布由主控處理,本檔不記發布);相依 `wsemi` ≥ 1.9.31.
 - 全部測試:`npm test`;各 `api-` 檔自建 docker 容器(`test/tools/pgContainer.mjs` 之 `PORTS` 登錄,埠序號 0–7 已用,8 為空),不動使用者既有容器 `postgresql-worm`、`mssql-worm`.
 
 ## 功能現況
@@ -13,23 +13,23 @@
 | 主鍵值(只讀自有屬性)、寫入路徑、DDL/ON CONFLICT/RETURNING 引用 | R5、R7、R9、R10、R8 | `api-write-safety`、`api-postgresql`、`unit-cvwrite` | 完成 |
 | 字串良構(孤立代理、NUL;wsemi `chkOrmStr`/`chkOrmData`) | R17 | `unit-wellformed`、`api-wellformed` | 完成 |
 | 測試容器與埠 | R15 | `api-container-cleanup` | 完成 |
-| **診斷輸出單一出口**(`src/getDiag.mjs`;選項 `logDetail`、`funLog`;預設只輸出標籤與不含個資之摘要;連線憑證遮罩) | **R18**(S26–S28) | `unit-diaglog`、`api-diaglog`(共用 `test/tools/diagScenario.mjs`、`diagGolden.json`) | **pg-run01 完成(2026-10-28),待主控跑全套並發布** |
+| **診斷輸出與對外錯誤值遮罩**(wsemi `getDiag`/`getDiagSecrets` 單一擁有,本套件只宣告秘密來源 `opt.url`+連線字串、`codes:['sqlstate']`、`types:['DatabaseError']`、`safeKeys:['mode']`;預設只輸出標籤與摘要;reject、`error` 事件之訊息、`save`/`del` 逐筆 `err` 之外來值經驅動接縫 `diag.err` 遮憑證;自身固定詞彙錯誤不遮) | **R18**(S26–S30) | `unit-diaglog`(wsemi 語料 wire 子集接線、選項、單一出口與站點盤點)、`unit-diagerr`(站點矩陣 F1–F6、固定詞彙原樣 O1–O16)、`api-diaglog`(真驅動:PG-R3、後端回顯;回傳契約 golden 5 組選項) | **mig-pg 完成(2026-10-29),待主控複審與發布** |
 
-## R18 診斷輸出現況(第 153 項)
+## R18 診斷輸出現況(第 153 項、第 161 項)
 
-- 實際 console 站點僅 2 處(`WOrmPostgresql.mjs` 的 `emitChange`/`emitError` catch),皆改經 `diag`;預設 `change handler threw { mode, errType, errCode? }`/`error handler threw {…}`;`logDetail:true` 還原為遮罩後之錯誤副本(bare);`funLog(label, safe, detail)` 取代 console.
-- 建構函式/連線設定無回顯網址或帳密之站點(未新增 `maskUrl`);以 `unit-diaglog` R18-8、`api-diaglog` R18-5 鎖住現況.
-- 回傳契約以修改前 HEAD 產生之 `diagGolden.json` 逐項比對(五種選項組合 × 一般/壞訂閱函數 × 可連線/不可連線).
-- README 已含〈Diagnostic output〉與〈Breaking changes (diagnostic output)〉;JSDoc 已含 `opt.logDetail`、`opt.funLog`.
+- `src/getDiag.mjs` 已刪;實際 console 出口只有 wsemi 之 `getDiag`;本套件之 `diag(` 站點 2 處(`emitChange`/`emitError` 之 catch):`change handler threw`、`error handler threw`,safe 為 `{ mode, ...diag.brief(e) }`,預設 stdout `console.log`;`logDetail:true` 輸出 `console.log(label, 遮罩後細節)`;`funLog(label, safe, detail)` 取代 console.
+- 驅動呼叫(`new PgClient`、`connect`、`query`、`end`)經 `pgClient`、`pgConnect`、`pgRun`、`pgEnd` 接縫,外來值於接縫經 `diag.err`;`cloneDeep` catch(4 處)與 `createTable` 讀樣本(1 處)為使用端程式拋出之外來值;本套件自身之固定詞彙錯誤不遮.站點全集與處置見規則帳本 R18 站點表(20 列,無空白格).
+- 回傳契約:無憑證之值與修改前相同,`diagGolden.json` 未重產且全綠;含憑證者(PG-R3:畸形網址之 `getaddrinfo ENOTFOUND <片段>`、後端回顯等於密碼之資料值)為預期之行為變化,README〈Breaking changes〉已載.
+- README 已含〈Diagnostic output (`logDetail`, `funLog`) and error values〉與〈Breaking changes (diagnostic output and error values)〉;JSDoc 已更新.
 
 ## 已知缺口與待辦
 
-- **待主控裁示**(pg-run01 外審與盤點所得,皆既有行為、屬回傳契約或範圍外,未改):
-  1. reject 值與 `error` 事件 payload 含後端/驅動原文與本套件既有回顯(`createTable` 樣本非物件之 `obj[<值>]`、`can not select by find|pk[…]`、`cvFind` 欄名/Proxy 陷阱訊息);畸形網址(密碼含未編碼 `@ / ? #`)時含密碼片段.
-  2. `new PgClient` 未掛 `client.on('error')`:連線建立後被後端非同步中斷為未捕捉例外.
-  3. `BEGIN/COMMIT/ROLLBACK` 不經 `pgq`:`Object.prototype.name` 資料型汙染 > 63 字元時 pg 當具名查詢並 `console.error`.
-- 發布、版本號、全套驗證由主控處理.
+- **待主控裁示**:
+  1. 回顯呼叫端自身輸入之訊息(`createTable` 之 `obj[<值>]`、`can not select by find|pk[…]`、`cvFind`/`cvOrder` 之欄名與使用端 hook 訊息)目前不遮憑證(屬回傳契約,視為自身訊息);是否也須遮,見帳本 R18 已知限制 1.
+  2. 真驅動 `DatabaseError` 實例自帶 `name='error'`,wsemi 之類別名規則使 `errType` 為 `Error`(宣告之 `types:['DatabaseError']` 對其不生效);已列 `建議wsemi修正.md` 交主控.
+  3. 既有、範圍外:`new PgClient` 未掛 `client.on('error')`(連線建立後被後端非同步中斷為未捕捉例外);`BEGIN/COMMIT/ROLLBACK` 不經 `pgq`.
+- 發布、版本號由主控處理.
 
 ## 最近一次驗證
 
-pg-run01(2026-10-28):全套 `npm test` 3695 passing / 610 pending / 0 failing(quiet-run exit=0);`unit-diaglog` 50 案、`api-diaglog` 33 案全綠;eslint 0 error(改動檔);變異 54/56 殺死(餘 2 等價);外審 Argon 24 條(屬實 23、部分 2、誤報 1).證據在 `C:\opensrcOper\dnow\20261028054319\agent-out\pg-run01-evidence\`,報告 `…\pg-run01-修正報告.md`.
+mig-pg(2026-10-29):全套 `npm test` 3773 passing / 610 pending / 0 failing(quiet-run `--lock`,exit=0);`unit-diaglog`+`unit-diagerr` 120 案、`api-diaglog` 41 案全綠;eslint 0 error(改動檔);修前紅:unit 66/120、api 7/41;變異 64/64 殺死(1 個僅盤點掃描殺死,行為等價),api 層(挑 8 個)單獨 5/8.證據在 `C:\opensrcOper\dnow\20261029002013\agent-out\mig-pg-evidence\`,報告 `…\mig-pg-修正報告.md`.

@@ -15,6 +15,8 @@ import isnum from 'wsemi/src/isnum.mjs'
 import isint from 'wsemi/src/isint.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import evem from 'wsemi/src/evem.mjs'
+import getDiag from 'wsemi/src/getDiag.mjs'
+import getDiagSecrets from 'wsemi/src/getDiagSecrets.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
 import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
 import chkOrmData from 'wsemi/src/chkOrmData.mjs'
@@ -22,7 +24,6 @@ import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
 import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
 import { buildSelect, buildDelete, quoteTable, isSysCol } from './buildSql.mjs'
-import { getOptLog, getSecretsOfUrl, getDiag, getBriefErr } from './getDiag.mjs'
 
 
 //pgBools, PostgreSQL boolean輸入字串之對照(去空白、不分大小寫; PG接受唯一前綴), 供insert之returnList比對輸入主鍵與BOOLEAN欄回傳值; null原型避免繼承名稱
@@ -48,10 +49,12 @@ let pgBools = Object.create(null)
  * 1. 主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: <原因> at [data[<k>].<主鍵名>])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。
  * 2. 寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: <原因> at [data[<k>].<路徑>])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[<k>].<invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。
  * 3. 建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.<名>: <原因>')。
- * 診斷輸出(w-orm系列規則，單一出口src/getDiag.mjs)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
+ * 診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
  * 預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
- * opt.logDetail為true時還原為舊版輸出(輸出訂閱函數拋出之值經遮罩後的副本；內建錯誤類別[Error、TypeError等]之輸出與舊版逐字相同，使用端自訂類別、Map/Set、二進位、函數與存取器等以純物件或標記字串表示)，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console。
- * 連線字串與帳密於任何輸出(預設、logDetail、funLog之detail)一律以***遮罩。各操作之resolve/reject內容、事件payload與時機不受影響(error事件與reject之錯誤訊息仍為後端原文，由呼叫端自行處置)。
+ * opt.logDetail為true時輸出訂閱函數拋出之值經遮罩後的副本(console.log(label, 細節))，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console；副本之形態(Error、Map/Set、二進位、函數、存取器等之表示)見wsemi之getDiag。
+ * 連線字串與帳密於任何診斷輸出(預設、logDetail、funLog之detail)一律以***遮罩。
+ * 對外之錯誤值不含連線憑證：驅動與後端之reject值、error事件之訊息引數、save與del逐筆結果之err，含連線憑證(整串網址、密碼、帳號:密碼、畸形網址之片段等)者為遮罩後之副本(同類別之錯誤，message等字串中之憑證為***，code等非秘密欄位保留)，無憑證者為原物件；本套件自身以固定詞彙組成之錯誤(invalid ...)原樣；單獨之帳號與資料值不遮。
+ * 各操作之resolve內容、事件payload(data引數)與時機不受影響(data為呼叫端輸入，屬回傳契約)。
  * 檢核作用於cloneDeep後之複本、先於連線與任何寫入(createTable之表名、主鍵名與樣本物件之鍵亦於連線之前檢核)；資料之走訪檢核在另一份獨立複本上進行(走訪會呼叫存取器，其副作用不得改動其後實際寫入者)，事件回呼收到的數據亦為獨立複本，不得影響待處理之筆。
  * save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事件不因資料庫是否可連線而異)，批次中仍有待處理之筆時連線失敗則整批reject。本套件無autoGenPk，檢核不隨任何設定改變。既有資料不遷移(PostgreSQL以UTF-8儲存，過去寫入孤立代理字元者已被改寫為U+FFFD，無從還原，見README之檢出與清除方式)。
  *
@@ -62,8 +65,8 @@ let pgBools = Object.create(null)
  * @param {String} [opt.cl='test'] 輸入使用資料表名稱字串，不得含孤立代理字元或NUL(建構即throw Error('invalid opt.cl: ...')，否則UTF-8送出時會變為U+FFFD而誤中他表)，預設'test'
  * @param {String} [opt.pk='time'] 輸入主鍵欄位名字串，須為識別字(字母或底線開頭，其後字母、數字、底線，至多63 bytes)且不得為系統欄名(ctid、tableoid、xmin、xmax、cmin、cmax)，不合者建構拋出Error('invalid opt.pk')，預設'time'
  * @param {Boolean} [opt.useCache=false] 輸入是否使用select快取，適用於單程序操作，預設false
- * @param {Boolean} [opt.logDetail=false] 輸入診斷輸出是否還原為含資料值與錯誤原文之完整細節(連線字串與帳密仍以***遮罩)，須為true才生效，其餘型別忽略並用預設，預設false(只輸出標籤與不含個資之摘要)
- * @param {Function} [opt.funLog=null] 輸入診斷輸出接收函數funLog(label, safe, detail)，須為函數才生效，其餘型別忽略並用預設；給予時診斷輸出只交給它而不寫console，label為固定標籤、safe為不含個資之摘要、detail為完整細節(連線字串與帳密已以***遮罩)，其回傳之promise若reject亦被吞下，預設null
+ * @param {Boolean} [opt.logDetail=false] 輸入診斷輸出是否含資料值與錯誤細節(連線字串與帳密仍以***遮罩)，須為true才生效，其餘型別忽略並用預設，預設false(只輸出標籤與不含個資之摘要)
+ * @param {Function} [opt.funLog=null] 輸入診斷輸出接收函數funLog(label, safe, detail)，須為函數才生效，其餘型別忽略並用預設；給予時診斷輸出只交給它而不寫console，label為固定標籤、safe為不含個資之摘要、detail為完整細節(連線字串與帳密已以***遮罩)，其回傳之原生Promise若reject亦被吞下，預設null
  * @returns {Object} 回傳操作資料庫物件，各事件功能詳見說明
  */
 function WOrmPostgresql(opt = {}) {
@@ -292,13 +295,22 @@ function WOrmPostgresql(opt = {}) {
         }
     }
 
+    //ours, ownErr, 本套件自身以固定詞彙組成之錯誤(不經diag.err: 對固定字串挖空會讓缺口反推短密碼);
+    //genSqlForCreateTable與createTable讀取呼叫端之樣本物件(存取器、Proxy陷阱、toString皆為使用端程式), 其拋出之值為外來值, 以此登記區分
+    let ours = new WeakSet()
+    let ownErr = (msg) => {
+        let e = new Error(msg)
+        ours.add(e)
+        return e
+    }
+
     //genSqlForCreateTable, 表名(cvTable)、欄名鍵與主鍵名(isColumnName)先檢核再以雙引號引用(與INSERT、UPDATE、find之引用一致, 不折為小寫),
     //型別為getValueType之固定常數集合, 不含呼叫端字串; 不合者拋Error(訊息不回顯該值), 此時尚未送出任何語句(R9, W4)
     function genSqlForCreateTable(tableName, pk, obj) {
 
         //check, iseobj以for..in判定而含繼承可列舉鍵, 但欄位只取自有鍵(Object.entries), 故另要求至少一個自有鍵(否則建出零欄表)
         if (!iseobj(obj) || Object.keys(obj).length === 0) {
-            throw new Error(`obj[${obj}] is not an effective object`)
+            throw ownErr(`obj[${obj}] is not an effective object`)
         }
 
         //table
@@ -307,18 +319,18 @@ function WOrmPostgresql(opt = {}) {
             table = cvTable(tableName)
         }
         catch (err) {
-            throw new Error('invalid createTable: invalid table name')
+            throw ownErr('invalid createTable: invalid table name')
         }
 
         //pk
         if (!isColumnName(pk)) {
-            throw new Error('invalid createTable: invalid pk name')
+            throw ownErr('invalid createTable: invalid pk name')
         }
 
         //columns
         let columns = Object.entries(obj).map(([key, value], i) => {
             if (!isColumnName(key)) {
-                throw new Error(`invalid createTable: unsupported column name at [${i}]`)
+                throw ownErr(`invalid createTable: unsupported column name at [${i}]`)
             }
             let type = getValueType(value)
             let c = `  ${quoteKey(key)} ${type}`
@@ -339,10 +351,16 @@ function WOrmPostgresql(opt = {}) {
     let connectionString = `${url}/${db}`
     // console.log('connectionString', connectionString)
 
-    //diag, 診斷輸出之單一出口(R18): src內所有console輸出皆經此, 除getDiag.mjs外不得直接呼叫console;
-    //預設只輸出固定標籤與不含個資之摘要, opt.logDetail還原細節, opt.funLog取代console; 連線字串與帳密(opt.url及其解析所得之帳號與密碼)於任何輸出皆遮罩;
-    //其後各路徑共用此快照, 不再讀取使用端的opt
-    let diag = getDiag(getOptLog(opt), getSecretsOfUrl(url, connectionString))
+    //diag, 診斷輸出與對外錯誤值遮罩之單一出口(R18, 規格R-DIAG-01, 由wsemi之getDiag擁有): src內不得直接呼叫console;
+    //預設只輸出固定標籤與不含個資之摘要, opt.logDetail輸出遮罩後之細節, opt.funLog取代console; 連線字串與帳密(opt.url、組成之連線字串及其解析所得之帳號與密碼)於任何診斷輸出皆遮罩;
+    //diag.err遮除外來值(驅動與後端之錯誤、使用端存取器與Proxy陷阱拋出之值)之憑證, 對外之reject、error事件之訊息與逐筆err前必經; 本套件自身以固定詞彙組成之錯誤不經;
+    //safe只放mode(本套件固定操作別)與diag.brief之errType、errCode(sqlstate與DatabaseError為本套件宣告); 其後各路徑共用建構時之選項快照, 不再讀取使用端的opt
+    let diag = getDiag(opt, {
+        secrets: getDiagSecrets({ urls: [url, connectionString] }),
+        codes: ['sqlstate'],
+        types: ['DatabaseError'],
+        safeKeys: ['mode'],
+    })
 
     //ee, 採eventemitter3而不採Node內建之events.EventEmitter,
     //因後者於'error'無監聽者時會將錯誤直接拋出, 將使操作行為隨呼叫端是否註冊監聽而異
@@ -369,24 +387,64 @@ function WOrmPostgresql(opt = {}) {
             ee.emit('change', mode, data, res)
         }
         catch (errEmit) {
-            diag('change handler threw', { mode, ...getBriefErr(errEmit) }, () => errEmit, true)
+            diag('change handler threw', { mode, ...diag.brief(errEmit) }, () => errEmit)
         }
     }
 
     //emitError, 操作發生錯誤時發出, 錯誤訊息一律轉為字串
     //正常結果(如查無數據、主鍵未命中、內容相同而未寫入)不得發出, 以免監聽者將常態當異常
+    //err為各站點交來之值: 外來值(驅動、後端、使用端程式拋出者)已於接縫(pgClient、pgConnect、pgRun、pgEnd)或站點經diag.err遮除憑證, 本套件自身之固定詞彙錯誤原樣; 本函數不再遮罩
+    //(其同時收自身之固定詞彙錯誤, 一律遮罩會把固定字串挖空而讓缺口反推短密碼); data為呼叫端輸入, 屬回傳契約
     let emitError = (mode, data, err) => {
         try {
             ee.emit('error', mode, data, getErrMsg(err))
         }
         catch (errEmit) {
-            diag('error handler threw', { mode, ...getBriefErr(errEmit) }, () => errEmit, true)
+            diag('error handler threw', { mode, ...diag.brief(errEmit) }, () => errEmit)
         }
     }
 
     //PgClient
     let PgClient = pg.Client
     // console.log('PgClient', PgClient)
+
+    //pgClient, pgConnect, pgRun, pgEnd: 驅動(pg)呼叫之單一接縫(R18): src內不得在此以外呼叫new PgClient、client.connect、client.query、client.end(unit-diaglog掃描);
+    //驅動與後端拋出或reject之值(含建構時解析連線字串之同步拋錯)為外來值, 一律於此經diag.err遮除憑證後再拋出(無憑證者為原物件, 身分不變; 有則為同類別之副本, code等非秘密欄位保留);
+    //各站點之catch、save與del之逐筆err、error事件之訊息皆由此取得已遮罩之值, 故不再逐處包裝; 本套件自身以固定詞彙組成之錯誤不經此(R-DIAG-01 D3)
+    function pgClient() {
+        try {
+            return new PgClient({ connectionString })
+        }
+        catch (err) {
+            throw diag.err(err)
+        }
+    }
+    async function pgConnect(client) {
+        try {
+            await client.connect()
+        }
+        catch (err) {
+            throw diag.err(err)
+        }
+    }
+
+    //pgRun, q為pgq所組之查詢設定或交易控制語句(BEGIN、COMMIT、ROLLBACK)之字串
+    async function pgRun(client, q) {
+        try {
+            return await client.query(q)
+        }
+        catch (err) {
+            throw diag.err(err)
+        }
+    }
+    async function pgEnd(client) {
+        try {
+            await client.end()
+        }
+        catch (err) {
+            throw diag.err(err)
+        }
+    }
 
     //clearCache
     function clearCache() {
@@ -444,7 +502,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //transaction
-        await client.query('BEGIN')
+        await pgRun(client, 'BEGIN')
 
         try {
 
@@ -469,7 +527,7 @@ function WOrmPostgresql(opt = {}) {
                 }
 
                 //insert
-                let r = await client.query(pgq(sql, mr.values))
+                let r = await pgRun(client, pgq(sql, mr.values))
 
                 //nIns
                 nIns += r.rowCount
@@ -482,7 +540,7 @@ function WOrmPostgresql(opt = {}) {
             }
 
             //commit
-            await client.query('COMMIT')
+            await pgRun(client, 'COMMIT')
 
             return {
                 nIns,
@@ -492,7 +550,7 @@ function WOrmPostgresql(opt = {}) {
         catch (err) {
 
             //rollback, 令已送出之批次一併回滾
-            await client.query('ROLLBACK').catch(() => {})
+            await pgRun(client, 'ROLLBACK').catch(() => {})
 
             throw err
         }
@@ -590,7 +648,7 @@ function WOrmPostgresql(opt = {}) {
 
             //check
             if (!iseobj(obj)) {
-                throw new Error(`obj[${obj}] is not an effective object`)
+                throw ownErr(`obj[${obj}] is not an effective object`)
             }
 
             //sql
@@ -599,18 +657,21 @@ function WOrmPostgresql(opt = {}) {
 
         }
         catch (err) {
-            emitError('createTable', arr, err)
-            return Promise.reject(err)
+
+            //本套件自身之固定詞彙錯誤(ownErr)原樣; 其餘為讀取呼叫端樣本物件時其存取器、Proxy陷阱或toString拋出之值(外來值), 遮除憑證
+            let e = ours.has(err) ? err : diag.err(err)
+            emitError('createTable', arr, e)
+            return Promise.reject(e)
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -631,7 +692,7 @@ function WOrmPostgresql(opt = {}) {
         try {
 
             //create, DDL亦經pgq(extended協定): 不可堆疊執行第二語句(R8、R9)
-            await client.query(pgq(sql, []))
+            await pgRun(client, pgq(sql, []))
                 .then(() => {
                     res = {
                         ok: 1,
@@ -648,7 +709,7 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
         // console.log('res', res)
@@ -734,13 +795,13 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -767,7 +828,7 @@ function WOrmPostgresql(opt = {}) {
             // console.log('mr.values', mr.values)
 
             //select
-            let r = await client.query(pgq(mr.query, mr.values))
+            let r = await pgRun(client, pgq(mr.query, mr.values))
             // console.log('r', r)
 
             //res
@@ -790,7 +851,7 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
         // console.log('res', res)
@@ -840,13 +901,13 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -874,7 +935,7 @@ function WOrmPostgresql(opt = {}) {
             // console.log('mr.values', mr.values)
 
             //select
-            let r = await client.query(pgq(mr.query, mr.values))
+            let r = await pgRun(client, pgq(mr.query, mr.values))
             // console.log('r', r)
 
             //rows
@@ -916,7 +977,7 @@ function WOrmPostgresql(opt = {}) {
 
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
         // console.log('res', res)
@@ -984,8 +1045,11 @@ function WOrmPostgresql(opt = {}) {
             data = cloneDeep(data)
         }
         catch (err) {
-            emitError('insert', null, err)
-            return Promise.reject(err)
+
+            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
+            let e = diag.err(err)
+            emitError('insert', null, e)
+            return Promise.reject(e)
         }
 
         //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
@@ -1002,13 +1066,13 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -1056,7 +1120,7 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
 
@@ -1115,8 +1179,11 @@ function WOrmPostgresql(opt = {}) {
             data = cloneDeep(data)
         }
         catch (err) {
-            emitError('insertBulk', null, err)
-            return Promise.reject(err)
+
+            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
+            let e = diag.err(err)
+            emitError('insertBulk', null, e)
+            return Promise.reject(e)
         }
 
         //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
@@ -1133,13 +1200,13 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -1180,7 +1247,7 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
 
@@ -1243,8 +1310,11 @@ function WOrmPostgresql(opt = {}) {
             data = cloneDeep(data)
         }
         catch (err) {
-            emitError('save', null, err)
-            return Promise.reject(err)
+
+            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
+            let e = diag.err(err)
+            emitError('save', null, e)
+            return Promise.reject(e)
         }
 
         //autoInsert
@@ -1280,14 +1350,14 @@ function WOrmPostgresql(opt = {}) {
         //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
         //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
         let needConn = rowErrs.some((e) => e === null)
-        let client = needConn ? new PgClient({ connectionString }) : null
+        let client = needConn ? pgClient() : null
 
         //connect
         try {
 
             //connect
             if (needConn) {
-                await client.connect()
+                await pgConnect(client)
             }
 
         }
@@ -1346,7 +1416,7 @@ function WOrmPostgresql(opt = {}) {
                     // console.log('mr.values', mr.values)
 
                     //select
-                    let r = await client.query(pgq(mr.query, mr.values))
+                    let r = await pgRun(client, pgq(mr.query, mr.values))
                     // console.log('r', r)
 
                     //rows
@@ -1453,7 +1523,7 @@ function WOrmPostgresql(opt = {}) {
                     let sql = `${mr.query} ${conflict} RETURNING (xmax = 0) AS inserted`
 
                     //save
-                    await client.query(pgq(sql, mr.values))
+                    await pgRun(client, pgq(sql, mr.values))
                         .then((r) => {
 
                             //rows
@@ -1560,7 +1630,7 @@ function WOrmPostgresql(opt = {}) {
                     // console.log('mr.values', mr.values)
 
                     //save
-                    await client.query(pgq(mr.query, mr.values))
+                    await pgRun(client, pgq(mr.query, mr.values))
                         .then((r) => {
 
                             //check
@@ -1626,7 +1696,7 @@ function WOrmPostgresql(opt = {}) {
         }
         finally {
             if (client !== null) {
-                await client.end()
+                await pgEnd(client)
             }
             client = null
         }
@@ -1679,8 +1749,11 @@ function WOrmPostgresql(opt = {}) {
             data = cloneDeep(data)
         }
         catch (err) {
-            emitError('del', null, err)
-            return Promise.reject(err)
+
+            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
+            let e = diag.err(err)
+            emitError('del', null, e)
+            return Promise.reject(e)
         }
 
         //check pk, 於連線之前對複本檢核(R17): 逐筆處置, 主鍵無效(缺主鍵、含孤立代理字元或NUL之字串等)者該筆回ok:0與err(固定詞彙, 不回顯值)且不送查詢,
@@ -1695,14 +1768,14 @@ function WOrmPostgresql(opt = {}) {
         //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
         //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
         let needConn = reasons.some((r) => r === null)
-        let client = needConn ? new PgClient({ connectionString }) : null
+        let client = needConn ? pgClient() : null
 
         //connect
         try {
 
             //connect
             if (needConn) {
-                await client.connect()
+                await pgConnect(client)
             }
 
         }
@@ -1760,7 +1833,7 @@ function WOrmPostgresql(opt = {}) {
                 // console.log('mr.values', mr.values)
 
                 //del, n與nDeleted皆為主鍵命中筆數, 未命中為0
-                await client.query(pgq(mr.query, mr.values))
+                await pgRun(client, pgq(mr.query, mr.values))
                     .then((r) => {
 
                         //res
@@ -1798,7 +1871,7 @@ function WOrmPostgresql(opt = {}) {
         }
         finally {
             if (client !== null) {
-                await client.end()
+                await pgEnd(client)
             }
             client = null
         }
@@ -1880,13 +1953,13 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = new PgClient({ connectionString })
+        let client = pgClient()
 
         //connect
         try {
 
             //connect
-            await client.connect()
+            await pgConnect(client)
 
         }
         catch (err) {
@@ -1927,7 +2000,7 @@ function WOrmPostgresql(opt = {}) {
             // console.log('mr.values', mr.values)
 
             //delAll
-            await client.query(pgq(mr.query, mr.values))
+            await pgRun(client, pgq(mr.query, mr.values))
                 .then((r) => {
 
                     //res
@@ -1949,7 +2022,7 @@ function WOrmPostgresql(opt = {}) {
             res = err
         }
         finally {
-            await client.end()
+            await pgEnd(client)
             client = null
         }
 

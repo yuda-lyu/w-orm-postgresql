@@ -1,6 +1,7 @@
 import fs from 'fs'
 import util from 'util'
 import assert from 'assert'
+import pg from 'pg'
 import WOrm from '../src/WOrmPostgresql.mjs'
 import { startPg, stopPg, connectPg } from './tools/pgContainer.mjs'
 import { scenario, scenarioConn, settle, ID, PW } from './tools/diagScenario.mjs'
@@ -308,7 +309,7 @@ describe('diaglog', function() {
 
     describe('logDetail(R18-2)', function() {
 
-        it('還原舊版輸出: 只輸出訂閱函數拋出之錯誤(無標籤); 無憑證之錯誤格式與舊版console.log(err)逐字相同', async function() {
+        it('logDetail輸出標籤與訂閱函數拋出之錯誤(console.log(label, 細節), stdout); 無憑證之錯誤其細節格式與util.format(label, err)逐字相同', async function() {
             let w = mk('tdiag_c', { logDetail: true })
             let thrown = []
             w.on('change', () => {
@@ -319,7 +320,7 @@ describe('diaglog', function() {
             let { res, lines } = await capture(() => settle(w.insert({ id: ID, name: NAME })))
             assert.deepStrictEqual(res, { ok: { n: 1, nInserted: 1, ok: 1 } })
             assert.strictEqual(lines.length, 1)
-            assert.strictEqual(lines[0], util.format(thrown[0]), '格式須與舊版console.log(err)一致')
+            assert.strictEqual(lines[0], util.format('change handler threw', thrown[0]), '格式須為標籤加錯誤(同console.log(label, err))')
             assert.ok(lines[0].indexOf(ID) >= 0, '還原細節應含錯誤原文')
             await mk('tdiag_c').del({ id: ID })
         })
@@ -511,7 +512,7 @@ describe('diaglog', function() {
             }
         })
 
-        it('畸形網址(密碼含@後接未編碼/): pg把密碼片段當主機名而出現在後端錯誤訊息, 訂閱函數轉拋該訊息時, 預設與logDetail輸出皆不含該片段(外審 A-3)', async function() {
+        it('畸形網址(密碼含@後接未編碼/): pg把密碼片段當主機名而出現在後端錯誤訊息, 對外之reject與error事件已遮罩(PG-R3); 訂閱函數轉拋該訊息時, 預設與logDetail輸出皆不含該片段(外審 A-3)', async function() {
             let url = 'postgresql://tuser:p@S3cretHostPw.invalid/rest@127.0.0.1:1'
             for (let ex of [{}, { logDetail: true }]) {
                 let w = WOrm({ url, db: 'worm', cl: 'tconn', pk: 'id', ...ex })
@@ -519,7 +520,9 @@ describe('diaglog', function() {
                     throw new Error(`rethrow ${msg}`)
                 })
                 let { res, lines } = await capture(() => settle(w.select({})))
-                assert.ok(res.err.indexOf('ENOTFOUND') >= 0, res.err) //回傳契約: reject仍為後端原文(含片段)
+                //對外錯誤值不含憑證(PG-R3): reject為遮罩後之副本, 片段為***, code保留
+                assert.strictEqual(res.err, 'getaddrinfo ENOTFOUND ***', res.err)
+                assert.strictEqual(res.code, 'ENOTFOUND')
                 assert.strictEqual(lines.length, 1)
                 assert.ok(lines[0].indexOf('S3cretHostPw') < 0, `${JSON.stringify(ex)}: ${lines[0]}`)
                 if (ex.logDetail) {
@@ -543,6 +546,157 @@ describe('diaglog', function() {
             let text = JSON.stringify([got[0][0], got[0][1], got[0][2].message, got[0][2].code])
             assert.ok(text.indexOf('123456') < 0 && text.indexOf('numuser') < 0, text)
             assert.deepStrictEqual(got[0][1], { mode: 'select', errType: 'Error' }, '數值code不進摘要')
+        })
+
+    })
+
+
+    describe('對外錯誤值不含連線憑證(真驅動; PG-R3、依dspec〈診斷輸出與遮罩〉D3)', function() {
+
+        //reject、error事件之訊息引數、save與del之逐筆err皆經wsemi之diag.err: 含憑證者為遮罩副本(同類別, code等非秘密欄位保留), 無憑證者原物件;
+        //接縫與站點之逐一觸發(假驅動)見unit-diagerr, 此處為真驅動之接線: 驅動與後端自行產生之錯誤形態(getaddrinfo回顯、後端回顯資料值)
+        let seen = (v) => util.inspect(v, { depth: null, showHidden: true })
+        let opsOf = (cl) => [
+            ['createTable', (w) => w.createTable(cl, 'id', { id: 'x' })],
+            ['select', (w) => w.select({ id: 'a' })],
+            ['selectByPk', (w) => w.selectByPk('a')],
+            ['insert', (w) => w.insert({ id: 'a', v: 1 })],
+            ['insertBulk', (w) => w.insertBulk([{ id: 'a', v: 1 }])],
+            ['save', (w) => w.save({ id: 'a', v: 1 })],
+            ['del', (w) => w.del({ id: 'a' })],
+            ['delAll', (w) => w.delAll({ id: 'a' })],
+        ]
+        //go, 執行操作, 回傳{ ok }或{ rej }與error事件之訊息引數
+        let go = async (w, run) => {
+            let evs = []
+            w.on('error', (m, d, e) => evs.push([m, e]))
+            try {
+                return { ok: await run(w), evs }
+            }
+            catch (e) {
+                return { rej: e, evs }
+            }
+        }
+
+        before(async function() {
+            await admin.query('DROP TABLE IF EXISTS tdiag_i')
+            await admin.query('CREATE TABLE tdiag_i (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)')
+        })
+
+        after(async function() {
+            await admin.query('DROP TABLE IF EXISTS tdiag_i')
+            await admin.query('DROP TABLE IF EXISTS "password"')
+        })
+
+        it('PG-R3 畸形網址(密碼含@後接未編碼/): 驅動之getaddrinfo錯誤回顯密碼片段, 8個操作之reject與error事件皆為「getaddrinfo ENOTFOUND ***」, code與hostname之非秘密部分保留', async function() {
+            let url = 'postgresql://alice_u:p@w0rdXYZfrag.invalid/tail@127.0.0.1:1' //.invalid: 保證無法解析, 解析失敗為即時(不等DNS逾時)
+            for (let [name, run] of opsOf('tr3')) {
+                let r = await go(WOrm({ url, db: 'worm', cl: 'tr3', pk: 'id' }), run)
+                assert.ok(r.rej instanceof Error, name)
+                assert.strictEqual(r.rej.message, 'getaddrinfo ENOTFOUND ***', name)
+                assert.strictEqual(r.rej.code, 'ENOTFOUND', name)
+                assert.strictEqual(r.rej.syscall, 'getaddrinfo', name)
+                assert.ok(seen(r.rej).indexOf('w0rdXYZfrag') < 0, `${name} 含片段: ${seen(r.rej).slice(0, 300)}`)
+                assert.deepStrictEqual(r.evs, [[name, 'getaddrinfo ENOTFOUND ***']], name)
+            }
+        })
+
+        it('PG-R3 預設與logDetail之診斷輸出不受影響(另見畸形網址之診斷輸出案), 無憑證之真驅動錯誤(拒絕連線)reject內容與golden相同', async function() {
+            let r = await go(mkc(), (w) => w.select({}))
+            assert.strictEqual(r.rej.message, 'connect ECONNREFUSED 127.0.0.1:1')
+            assert.strictEqual(r.rej.code, 'ECONNREFUSED')
+            assert.deepStrictEqual(r.evs, [['select', 'connect ECONNREFUSED 127.0.0.1:1']])
+        })
+
+        it('錯誤密碼(真後端): 後端訊息不含密碼, reject之訊息、code(28P01)與類別不變', async function() {
+            let bad = ct.url.replace(':password@', ':WrongPw9z@')
+            assert.notStrictEqual(bad, ct.url)
+            let r = await go(WOrm({ url: bad, db: ct.db, cl: 'tdiag_c', pk: 'id' }), (w) => w.select({}))
+            assert.ok(r.rej instanceof Error)
+            assert.strictEqual(r.rej.message, 'password authentication failed for user "username"')
+            assert.strictEqual(r.rej.code, '28P01')
+            assert.strictEqual(r.rej.severity, 'FATAL')
+            assert.deepStrictEqual(r.evs, [['select', 'password authentication failed for user "username"']])
+        })
+
+        //後端於錯誤訊息回顯資料值: 資料值恰等於本實例之連線密碼(容器url之密碼為password)時, 回顯即含憑證
+        let isMaskedPgErr = (e, name) => {
+            assert.ok(e instanceof pg.DatabaseError, `${name} 應為DatabaseError之副本: ${seen(e).slice(0, 200)}`)
+            assert.strictEqual(e.message, 'invalid input syntax for type integer: "***"', name)
+            assert.strictEqual(e.code, '22P02', name)
+            assert.strictEqual(e.severity, 'ERROR', name)
+            assert.ok(seen(e).indexOf('"password"') < 0, `${name} ${seen(e).slice(0, 300)}`)
+        }
+        let MSG = 'invalid input syntax for type integer: "***"'
+
+        it('真後端回顯憑證: insert、insertBulk、select(Error物件reject)之訊息為遮罩副本, 同為DatabaseError、code=22P02、severity保留, error事件之訊息同遮罩', async function() {
+            for (let [name, run] of [
+                ['insert', (x) => x.insert({ id: 1, value: 'password' })],
+                ['insertBulk', (x) => x.insertBulk([{ id: 2, value: 'password' }])],
+                ['select', (x) => x.select({ value: 'password' })],
+            ]) {
+                let r = await go(mk('tdiag_i'), run)
+                isMaskedPgErr(r.rej, name)
+                assert.deepStrictEqual(r.evs, [[name, MSG]], name)
+            }
+        })
+
+        it('真後端回顯憑證: delAll與createTable(資料庫錯誤以訊息字串reject)為遮罩後之字串', async function() {
+            let r = await go(mk('tdiag_i'), (x) => x.delAll({ value: 'password' }))
+            assert.strictEqual(r.rej, MSG)
+            assert.deepStrictEqual(r.evs, [['delAll', MSG]])
+
+            //表名恰為密碼: 第二次建表之「already exists」回顯表名
+            let w = mk('password')
+            let r1 = await go(w, (x) => x.createTable('password', 'id', { id: 'x' }))
+            assert.deepStrictEqual(r1.ok, { ok: 1 })
+            let r2 = await go(w, (x) => x.createTable('password', 'id', { id: 'x' }))
+            assert.strictEqual(r2.rej, 'relation "***" already exists')
+            assert.deepStrictEqual(r2.evs, [['createTable', 'relation "***" already exists']])
+            await admin.query('DROP TABLE IF EXISTS "password"')
+        })
+
+        it('真後端回顯憑證: save與del之逐筆結果err為遮罩後之字串(與error事件同源); selectByPk之主鍵型別不符仍回null(契約不變)', async function() {
+            let rs = await go(mk('tdiag_i'), (x) => x.save({ id: 3, value: 'password' }))
+            assert.deepStrictEqual(rs.ok, [{ n: 1, nInserted: 0, nModified: 0, ok: 0, err: MSG }])
+            assert.deepStrictEqual(rs.evs, [['save', MSG]])
+            let rd = await go(mk('tdiag_i'), (x) => x.del({ id: 'password' }))
+            assert.deepStrictEqual(rd.ok, [{ n: 1, nDeleted: 0, ok: 0, err: MSG }])
+            assert.deepStrictEqual(rd.evs, [['del', MSG]])
+            let rp = await go(mk('tdiag_i'), (x) => x.selectByPk('password'))
+            assert.strictEqual(rp.ok, null)
+            assert.deepStrictEqual(rp.evs, [])
+        })
+
+        it('真後端回顯憑證: save之預讀(主鍵型別不符, 整批reject)為遮罩副本', async function() {
+            let r = await go(mk('tdiag_i'), (x) => x.save({ id: 'password', value: 1 }))
+            isMaskedPgErr(r.rej, 'save預讀')
+            assert.deepStrictEqual(r.evs, [['save', MSG]])
+        })
+
+        it('真後端之無憑證錯誤: 逐字原樣(重複主鍵), 且摘要取SQLSTATE代碼(sqlstate宣告)', async function() {
+            await admin.query('DELETE FROM tdiag_i')
+            await mk('tdiag_i').insert({ id: 10, name: 'n' })
+            let got = []
+            let w = mk('tdiag_i', { funLog: (...a) => got.push(a) })
+            w.on('error', (m, d, msg) => {
+                throw new Error(`rethrow ${msg}`)
+            })
+            let r = await go(w, (x) => x.insertBulk([{ id: 10, name: 'dup' }]))
+            assert.strictEqual(r.rej.code, '23505')
+            assert.ok(r.rej.message.indexOf('duplicate key value violates unique constraint') === 0 && r.rej.message.indexOf('***') < 0, r.rej.message)
+            //訂閱函數轉拋後端錯誤(此處為其訊息字串)之摘要: 只含mode與類別
+            assert.deepStrictEqual(got[0][1], { mode: 'insertBulk', errType: 'Error' })
+            //真驅動之DatabaseError實例自帶name='error', wsemi之類別名規則優先取實例name, 故類別名列為Error(而非DatabaseError); 代碼取自有code為SQLSTATE
+            let got2 = []
+            let w2 = mk('tdiag_i', { funLog: (...a) => got2.push(a) })
+            w2.on('error', () => {
+                throw r.rej
+            })
+            await go(w2, (x) => x.insertBulk([{ id: 10, name: 'dup' }]))
+            assert.strictEqual(got2[0][1].errCode, '23505')
+            assert.ok(['Error', 'DatabaseError'].includes(got2[0][1].errType), got2[0][1].errType)
+            await admin.query('DELETE FROM tdiag_i')
         })
 
     })
