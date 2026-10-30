@@ -687,16 +687,30 @@ describe('diaglog', function() {
             assert.ok(r.rej.message.indexOf('duplicate key value violates unique constraint') === 0 && r.rej.message.indexOf('***') < 0, r.rej.message)
             //訂閱函數轉拋後端錯誤(此處為其訊息字串)之摘要: 只含mode與類別
             assert.deepStrictEqual(got[0][1], { mode: 'insertBulk', errType: 'Error' })
-            //真驅動之DatabaseError實例自帶name='error', wsemi之類別名規則優先取實例name, 故類別名列為Error(而非DatabaseError); 代碼取自有code為SQLSTATE
+            //真驅動之DatabaseError實例自帶name='error'(前提, 先斷言它確為此形); wsemi(>=1.9.33)之types另以建構子名比對, 故宣告types:['DatabaseError']使類別名列為DatabaseError; 代碼取自有code為SQLSTATE
+            assert.ok(r.rej instanceof pg.DatabaseError && r.rej.name === 'error', `${r.rej?.constructor?.name}/${r.rej?.name}`)
             let got2 = []
             let w2 = mk('tdiag_i', { funLog: (...a) => got2.push(a) })
             w2.on('error', () => {
                 throw r.rej
             })
             await go(w2, (x) => x.insertBulk([{ id: 10, name: 'dup' }]))
-            assert.strictEqual(got2[0][1].errCode, '23505')
-            assert.ok(['Error', 'DatabaseError'].includes(got2[0][1].errType), got2[0][1].errType)
+            assert.deepStrictEqual(got2[0][1], { mode: 'insertBulk', errType: 'DatabaseError', errCode: '23505' })
             await admin.query('DELETE FROM tdiag_i')
+        })
+
+        it('真後端之遮罩副本(後端回顯憑證): 訂閱函數轉拋該副本之摘要, 類別名為DatabaseError(副本之name仍為error)、代碼取自有code(22P02)', async function() {
+            let r = await go(mk('tdiag_i'), (x) => x.insert({ id: 1, value: 'password' }))
+            isMaskedPgErr(r.rej, 'insert')
+            assert.strictEqual(r.rej.name, 'error')
+            let got = []
+            let w = mk('tdiag_i', { funLog: (...a) => got.push(a) })
+            w.on('error', () => {
+                throw r.rej
+            })
+            await go(w, (x) => x.insert({ id: 1, value: 'password' }))
+            assert.strictEqual(got.length, 1)
+            assert.deepStrictEqual(got[0][1], { mode: 'insert', errType: 'DatabaseError', errCode: '22P02' })
         })
 
     })

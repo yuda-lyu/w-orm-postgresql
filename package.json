@@ -1,11 +1,11 @@
 {
   "name": "w-orm-postgresql",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "main": "dist/w-orm-postgresql.umd.js",
   "dependencies": {
     "knex": "3.3.0",
     "pg": "^8.23.0",
-    "wsemi": "^1.9.31"
+    "wsemi": "^1.9.33"
   },
   "devDependencies": {
     "w-package-tools": "^1.1.21"

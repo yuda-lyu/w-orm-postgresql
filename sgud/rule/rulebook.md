@@ -268,6 +268,7 @@
   - S29 對外錯誤值不含連線憑證(D3):reject 值、`'error'` 事件之訊息引數、`save`/`del` 逐筆結果之 `err`,凡含外來值(驅動與後端之錯誤、使用端存取器或 Proxy 陷阱拋出之值)者經 `diag.err`:含憑證者為遮罩副本(同類別,`code` 等非秘密欄位保留),無憑證者為原物件;只遮憑證,不遮單獨帳號與資料值(Q3、P1).
   - S30 本套件自身以固定詞彙組成之錯誤(`invalid …`、`can not select by …`)不經遮罩(對固定字串挖空會讓缺口反推短密碼;D3).
 - **本套件之宣告**(全在 `WOrmPostgresql.mjs` 之 `getDiag(opt, cfg)`):`secrets: getDiagSecrets({ urls: [url, connectionString] })`(秘密來源為 `opt.url` 與組成之連線字串,帳密由其導出)、`codes: ['sqlstate']`、`types: ['DatabaseError']`、`safeKeys: ['mode']`;`diag(` 恰 2 站,label 為固定二詞(`change handler threw`、`error handler threw`),safe 恆為 `{ mode, ...diag.brief(e) }`;level 不傳(預設 stdout `console.log`,兩站與修改前一致,**無 stderr 站**);`opt` 原樣交 `getDiag` 讀取(`bare`、`method`、`isErr` 舊參數無).
+- **`errType` 之類別名(第 187 項,wsemi ≥ 1.9.33)**:`pg` 之 `DatabaseError` 實例自帶 `name = 'error'`(pg-protocol 建構子設 `this.name = name`);wsemi `getDiagBriefErr` 之 `types` 另以建構子名比對,故宣告 `types: ['DatabaseError']` 使真驅動錯誤(含遮罩副本,副本之 `name` 仍為 `error`)之 `errType` 為 `DatabaseError`;自設 `name` 但建構子名不在 `types` 者(如 `Error`、自訂類別)仍為 `Error`.測試**嚴格斷言** `DatabaseError`(不得放寬為 `['Error','DatabaseError']`):`unit-diaglog` C01b(真 `pg.DatabaseError`、同形自製類別、語料 C14 之 `make()`、自設 name 之反例)、`api-diaglog` 〈真後端之無憑證錯誤〉與〈真後端之遮罩副本〉(真 PostgreSQL 23505、22P02).
 - 規則:
   1. **單一出口**:`src` 內無任何 `console.*`、`process.stdout|stderr|emitWarning`(`unit-diaglog` 掃描,註解與字串不計);診斷輸出只經 wsemi `getDiag`;`src/getDiag.mjs` 已刪.
   2. **驅動呼叫之單一接縫**:`new PgClient`、`client.connect`、`client.query`、`client.end` 各恰 1 處(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),驅動與後端之拋出與 reject 一律於接縫經 `diag.err` 後再拋出;各站點之 catch、`.catch((err) => err.message)` 之逐筆 `err`、`emitError` 之訊息引數皆取自接縫已遮罩之值.故 `diag.err` 全檔恰 9 處(接縫 4、四個 `cloneDeep` catch、`createTable` 讀樣本 1),`diag.mask` 0 處(逐筆 `err` 之遮罩即接縫).新增驅動呼叫須經接縫(`unit-diaglog` 〈驅動呼叫之單一接縫〉掃描).
@@ -306,11 +307,12 @@
   - `npx mocha --no-parallel test/api-diaglog.test.mjs --timeout 180000`(需 docker,容器 `worm-test-pg-diaglog`、埠序號 7):預設/logDetail/funLog 實測 console、回傳契約 golden、憑證不外洩、**真驅動之對外錯誤值**(PG-R3 畸形網址 8 操作;後端回顯資料值等於密碼之 insert/insertBulk/select/delAll/createTable/save/del)。
   - 共用:`test/tools/diagScenario.mjs`、`test/tools/diagGolden.json`、`test/tools/fakePg.mjs`.
 - 驗證(mig-pg,2026-10-29):修前紅(新測試跑於 HEAD 之 `src`:unit 120 案中 66 案紅〔其餘 54 案為固定詞彙原樣、建構子訊息、單一出口掃描等 HEAD 亦成立者〕;api 41 案中 7 案紅〔logDetail 格式、畸形網址 reject、PG-R3 8 操作、後端回顯 insert/insertBulk/select、delAll/createTable、save/del 逐筆、save 預讀〕)、變異 64 個(`tmp/mig-pg/mutate.mjs`:接縫 4、各站點繞過接縫 36、cloneDeep 4、createTable 2、誤包固定詞彙 11、宣告 7)全數殺死(1 個僅由盤點掃描殺死:ROLLBACK 之 reject 被吞下,行為等價);api 層(挑 8 個)單獨殺 5/8(未殺者:BEGIN 與 `end` 失敗真驅動難造、createTable 固定詞彙路徑不涉驅動,皆由 unit 層之假驅動殺死).詳見報告.
+- 驗證(第 187 項 a-pg,2026-10-30):wsemi 1.9.32 → 1.9.33;新測試/收緊之斷言對 1.9.32 之 `getDiagBriefErr` 紅(unit 1 案、api 2 案,`errType` 為 `Error` 而期望 `DatabaseError`),對 1.9.33 綠;變異(`types: []`)5 案紅.wsemi 語料新增 wire 案 A11、U22(n/a)、C14(adapt,C01b)已入 DISPOSITION 表.
 - 已知限制與待裁示:
   1. **回顯呼叫端自身輸入之訊息不遮**(屬回傳契約;待主控裁示是否同樣遮憑證):`createTable` 樣本非物件之 `obj[<值>]`、`can not select by find|pk[…]`、`cvFind`/`cvOrder` 之欄名回顯與使用端 getter/Proxy 陷阱所拋錯誤之訊息(`cvFind.mjs` 之 `fail('can not read keys: …')`、`invalid find: <hook 訊息> at [find]`);`'error'` 事件之 `data` 引數為呼叫端輸入.
   2. `new PgClient` 未掛 `client.on('error')`:連線建立後被後端非同步中斷為未捕捉例外(既有,範圍外).
   3. `BEGIN/COMMIT/ROLLBACK` 不經 `pgq`(R8 刻意):`Object.prototype.name` 資料型汙染 > 63 字元時 pg 當具名查詢並 `console.error`(pg-protocol serializer;既有,範圍外).
-  4. wsemi 規格之已知限制(dspec §5)適用:reject 清單之短密碼(< 4 字元)不遮、單獨帳號於 reject 不遮、私有欄位無法複製至副本、Node < 20.16 無 `util.types` 時 Proxy 不可偵測等;`pg` 之 `DatabaseError` 實例自帶 `name = 'error'`,wsemi 之類別名規則優先取實例 `name`,故真驅動錯誤之 `errType` 為 `Error`(宣告 `types: ['DatabaseError']` 僅對 `name` 未被改寫者生效;已列 `建議wsemi修正.md`).
+  4. wsemi 規格之已知限制(dspec §5)適用:reject 清單之短密碼(< 4 字元)不遮、單獨帳號於 reject 不遮、私有欄位無法複製至副本、Node < 20.16 無 `util.types` 時 Proxy 不可偵測等(`pg` 之 `DatabaseError` 之 `errType` 見上〈`errType` 之類別名〉,wsemi ≥ 1.9.33 起已為 `DatabaseError`).
   5. 驅動/程式庫自身輸出(pg-connection-string 之 sslmode 警告、knex 固定文字警告、`DEBUG=knex:*`)不經單一出口(README 載明);第 153 項之盤點結論不變.
 
 ## 案例表閘門最終結果(第 3 次執行 v10:定稿實作 vs HEAD `8133f58`;工具 `tmp/cases/gate.mjs v10`;歷程 v8 → v9〔wsemi 組加註 `schema` 旗標重跑〕→ v10〔外審 sol 後 `src/emitKnex.mjs`、`buildSql.mjs`、`WOrmPostgresql.mjs` 有改,整表重跑;runner 加整表全欄快照 `unchangedFull`、預言機改在 select 之前取得;歸類器 patch 4〕)

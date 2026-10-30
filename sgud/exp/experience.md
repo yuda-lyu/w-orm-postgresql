@@ -2,6 +2,14 @@
 
 本檔為執行工作時特有之累積經驗,留給後續之嘗試、執行與判斷,由agent自行編列、擴充與維護.
 
+## 第 187 項 a-pg(wsemi 1.9.33:`DatabaseError` 之 `errType` 收緊,2026-10-30 18:46 起;產物在 `tmp/a-pg/`,結案已清)
+
+- **順序(有效)**:讀共通背景與改用須知 → `npm i wsemi@latest` → **先跑受影響測試**(`unit-diaglog` 立刻多一個紅:wsemi 語料新增 wire 案 `A11`、`C14`、`U22`,「分類完整」案防的就是這個,補 `DISPOSITION` 表即可)→ 收緊斷言 → 取修前紅 → 全套.收緊**不是只改 1 行**:放寬處除 `api-diaglog` 的 `includes`,`unit-diaglog` C01 當時是用「自製的 `class DatabaseError extends Error`(name 未改寫)」繞過,並未覆蓋「自帶 name 的真驅動實例」,要另補一案(C01b:真 `pg.DatabaseError`〔`new pg.DatabaseError(msg, 10, 'error')`〕、同形自製類別、語料 C14 之 `make()`、自設 name 的反例).
+- **修前紅用舊版 wsemi 副本取得,不必動 `node_modules`**:`npm pack wsemi@1.9.32 --pack-destination tmp/a-pg/pack` → `tar -xzf … -C tmp/a-pg/old/node_modules/wsemi --strip-components=1`,再把 `src`、`test`、`package.json` 複製到 `tmp/a-pg/old/`,以 `quiet-run --cwd tmp/a-pg/old -- node <repo>/node_modules/mocha/bin/mocha.js …` 跑:`pg`、`knex`、`lodash-es` 等由向上解析找到 repo 的 `node_modules`,`wsemi` 先命中副本內的舊版,**不需目錄連結**(清理無連結風險).舊版缺新語料案,故把 1.9.33 的 `src/_diagCases.mjs`(自足、無 import,只含資料與驗證函數)複製進舊副本,使紅的原因只剩 `getDiagBriefErr` 行為(否則 `byId('C14')` 為 undefined 而因無關的 TypeError 紅).
+- **斷言要先證明前提**:收緊的 api 案先斷言 `r.rej instanceof pg.DatabaseError && r.rej.name === 'error'`,證明走的確是「自帶 name」那條路徑;否則錯誤若是別的形態,收緊後綠也不證明什麼.遮罩副本(後端回顯憑證)的 `name` 仍為 `error`,另補一案.
+- **變異(`types: []`)**:複製 `src`、`test` 到 `tmp/a-pg/mut/`(無 `node_modules`,向上解析用 repo 之 1.9.33),只改 `types` 一行,5 案紅(C01、C01b、R-DIAG-01 宣告掃描、api 2 案),證明收緊的斷言同時鎖住「宣告」與「接線」.
+- **環境**:本機 Docker Desktop 若未運行(`docker version` 回 `dockerDesktopLinuxEngine` 管道不存在),`docker desktop start` 即起(約 1 分鐘內就緒);使用者既有容器 `postgresql-worm`、`mssql-worm` 為 Exited 狀態,不受影響、不碰.
+
 ## 第 161 項 mig-pg(遷移到 wsemi 共用診斷模組 wsemi ≥ 1.9.31,2026-10-29 19:17 起;產物在 `tmp/mig-pg/`:`red/`〔HEAD src 副本+新測試〕、`mutate.mjs`、`perf.mjs`;證據複本在任務夾 `agent-out/mig-pg-evidence/`)
 
 - **順序(有效)**:先讀 dspec 與設計 §4.1、§6 → `npm i wsemi@latest` → 刪自製 `getDiag.mjs`、改 src(只動 2 個診斷站點與驅動呼叫)→ 假驅動單元測試(`test/tools/fakePg.mjs`)→ 對 HEAD 副本取修前紅 → 真驅動 api 測試 → 變異 → 文件.全套 `npm test` 只要約 2 分鐘(3773 案),不必背景等待.
@@ -10,7 +18,7 @@
 - **含憑證之 reject 用真驅動造法**:①畸形網址(密碼含 `@` 後接未編碼 `/`)→ `getaddrinfo ENOTFOUND <片段>`(PG-R3;片段用 `.invalid` 結尾使解析即時失敗,不然每次等 DNS 約 2.7 秒);②**後端回顯資料值**:把資料值設成等於連線密碼(容器 url 密碼為 `password`),INTEGER 欄寫入或比較 `'password'` → `invalid input syntax for type integer: "password"`(22P02);`createTable` 表名取密碼,第二次建表之 `relation "password" already exists`;`del`/`save` 逐筆 err 同理.錯誤密碼之後端訊息**不**回顯密碼.
 - **假驅動測試**:`WOrmPostgresql` 於建構時讀 `pg.Client`(`let PgClient = pg.Client`),測試於建構期間暫時換入假類別、建構後還原,即可逐階段(`new`、`connect`、`query`〔依語句文字分流〕、`end`)觸發任意值之拋出/reject,不需 docker.注意 `{ ...ex }` 展開會執行 opt 之 getter,測選項 getter/快照要用原樣傳入之 `buildRaw`.
 - **wsemi 語料接線**:`_diagCases.mjs` 之 `wire:true` 案共 20 案;用 `DISPOSITION` 表逐案處置(detail+reject / adapt / n/a),並以「分類完整」案防日後 wsemi 新增 wire 案而本套件漏接.語料案之期望形狀多為其 `call()` 之回傳形狀,接線版要自行轉成對應形狀(例 R12 之 `{ e, r, c }`)或另寫等價斷言.R02(畸形網址片段)語料宣告 2 個 url 來源而本套件之 `opt.url` 只有 1 個,改以自建等價案與真驅動案.
-- **真驅動 `DatabaseError` 實例自帶 `name = 'error'`**:wsemi 之類別名規則優先取實例 `name`(字串資料屬性且非 `Error`),故宣告 `types: ['DatabaseError']` 對真驅動錯誤不生效(`errType` 為 `Error`,舊自製版取建構子名為 `DatabaseError`).測試以「類別名為 `DatabaseError` 且未改寫 `name` 之類別」驗證宣告有接上,並於 `api-diaglog` 對真錯誤只斷言 `errCode`;已列 `建議wsemi修正.md`.
+- **真驅動 `DatabaseError` 實例自帶 `name = 'error'`**(wsemi 1.9.31/1.9.32 時):wsemi 之類別名規則優先取實例 `name`,故宣告 `types: ['DatabaseError']` 對真驅動錯誤不生效(`errType` 為 `Error`,舊自製版取建構子名為 `DatabaseError`),當時測試放寬為 `['Error','DatabaseError'].includes(...)`.**1.9.33 已解**(`types` 另以建構子名比對),放寬已收緊,見〈第 187 項 a-pg〉.
 - **變異結果判讀**:64 個全殺,其中 1 個僅由盤點掃描殺死(ROLLBACK 之 reject 被 `.catch(() => {})` 吞下,行為等價);api 層(挑 8 個)單獨只殺 5/8(真驅動難造 BEGIN/`end` 失敗與 createTable 之固定詞彙路徑),其餘由 unit 層之假驅動殺死——**兩層缺一不可**:真驅動證明接線在真實錯誤形態下成立,假驅動證明每個站點各自有測試.「盤點掃描殺死」之變異要另標,因為它不證明行為有測試(先補行為測試:BEGIN 失敗、語句核對失敗之固定詞彙案).
 - **eslint**:新測試之物件字面值多屬性同行會報 `object-property-newline`/`object-curly-newline`,以 `npx eslint --fix <新測試檔>` 修(只動自己新寫之檔);測試標題字串含 `${…}` 會報 `no-template-curly-in-string`,改寫標題.
 - **工具陷阱**:Bash 傳 `decision-log.mjs` 之任務夾路徑要用正斜線(`C:/opensrcOper/dnow/…`),反斜線被 bash 吃掉而回「任務資料夾不存在」;守門 hook 擋 `cd`,一律絕對路徑或 `--cwd`.

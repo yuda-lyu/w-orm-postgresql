@@ -76,6 +76,7 @@ describe('wsemi共用語料之接線(D5): wire子集 x 本套件之真實呼叫�
         P01: 'detail+reject',
         S07: 'detail+reject',
         C01: 'adapt(safe)',
+        C14: 'adapt(safe: 本套件宣告types:[DatabaseError], 見C01b)',
         O01: 'adapt(logDetail console)',
         O15: 'adapt(safeKeys宣告)',
         R01: 'adapt(reject身分)',
@@ -86,6 +87,8 @@ describe('wsemi共用語料之接線(D5): wire子集 x 本套件之真實呼叫�
         R11: 'n/a(本套件未宣告儲存路徑paths)',
         A01: 'n/a(本套件不用genDiagFunLog)',
         A07: 'n/a(本套件不用genDiagFunLog)',
+        A11: 'n/a(本套件不用genDiagFunLog)',
+        U22: 'n/a(本套件以urls宣告秘密來源, 不用conns)',
     }
     let byId = (id) => dc.cases.find((c) => c.id === id)
     let ctxOf = () => dc.mkCtx({ util: true })
@@ -149,8 +152,7 @@ describe('wsemi共用語料之接線(D5): wire子集 x 本套件之真實呼叫�
         assert.strictEqual(c.expect.check(out, ctx), true)
         assert.ok(got.every(([, safe]) => safe.mode === 'createTable'))
 
-        //本套件宣告: PostgreSQL之SQLSTATE(sqlstate)與類別名DatabaseError(以類別名為DatabaseError且實例name未被改寫者驗證宣告有接上;
-        //真驅動之DatabaseError實例自帶name='error', wsemi之類別名規則優先取實例name故列為Error, 見報告〈建議wsemi修正〉)
+        //本套件宣告: PostgreSQL之SQLSTATE(sqlstate)與類別名DatabaseError(此處為實例name未被改寫者; 自帶name='error'之真驅動實例見下一案)
         let got2 = []
         let w2 = build(fakeOf(), { funLog: (...a) => got2.push(a) })
         class DatabaseError extends Error {}
@@ -178,6 +180,36 @@ describe('wsemi共用語料之接線(D5): wire子集 x 本套件之真實呼叫�
             { mode: 'createTable', errType: 'Error' },
             { mode: 'createTable', errType: 'Error' },
             { mode: 'createTable', errType: 'Error', errCode: 'EAI_AGAIN' },
+        ])
+    })
+
+    it('C01b 自帶name之驅動錯誤: pg之DatabaseError實例(name為error)與其類別名宣告types:[DatabaseError]比對建構子名而列為DatabaseError; 自設name之其他類別仍為Error', async function() {
+        let got = []
+        let w = build(fakeOf(), { funLog: (...a) => got.push(a) })
+        class DatabaseError extends Error {}
+        let e1 = Object.assign(new pg.DatabaseError('x', 10, 'error'), { code: '23505' }) //真驅動類別, 其name為pg-protocol自帶之'error'
+        let e2 = Object.assign(new DatabaseError('x'), { name: 'error', code: '3D000' }) //同形之自製類別
+        let e3 = Object.assign(new (class UserAlice01 extends Error {})('x'), { name: 'alice-secret', code: 'EAI_AGAIN' }) //自設name但建構子名不在宣告內
+        let e4 = Object.assign(new Error('x'), { name: 'error', code: '23505' }) //自設name且建構子為Error
+        let e0 = byId('C14').make() //wsemi共用語料之真驅動形態(同pg-protocol之建構子設this.name=name, 後端錯誤之name為error), code為23505
+        let specs = [e1, e2, e3, e4, e0]
+        //前提: 真驅動實例自帶name='error', 語料之實例同形
+        assert.strictEqual(e1.name, 'error')
+        assert.ok(e1 instanceof pg.DatabaseError)
+        assert.strictEqual(e0.name, 'error')
+        let i = 0
+        w.on('error', () => {
+            throw specs[i++]
+        })
+        for (let k = 0; k < specs.length; k++) {
+            await w.createTable('bad;name', 'id', { id: 1 }).catch(() => {})
+        }
+        assert.deepStrictEqual(got.map(([, s]) => s), [
+            { mode: 'createTable', errType: 'DatabaseError', errCode: '23505' },
+            { mode: 'createTable', errType: 'DatabaseError', errCode: '3D000' },
+            { mode: 'createTable', errType: 'Error', errCode: 'EAI_AGAIN' },
+            { mode: 'createTable', errType: 'Error', errCode: '23505' },
+            { mode: 'createTable', errType: 'DatabaseError', errCode: '23505' },
         ])
     })
 
