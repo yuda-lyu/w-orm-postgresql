@@ -96,9 +96,10 @@ let pgBools = Object.create(null)
  * 1. 主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: &lt;原因> at [data[&lt;k>].&lt;主鍵名>])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。
  * 2. 寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: &lt;原因> at [data[&lt;k>].&lt;路徑>])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[&lt;k>].&lt;invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。
  * 3. 建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.&lt;名>: &lt;原因>')。
- * 診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
- * 預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
- * opt.logDetail為true時輸出訂閱函數拋出之值經遮罩後的副本(console.log(label, 細節))，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console；副本之形態(Error、Map/Set、二進位、函數、存取器等之表示)見wsemi之getDiag。
+ * 診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件會寫console之情形有二：change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)；操作所用之連線於建立後被後端或網路非同步中斷(label為'client error')。
+ * 後者原為未捕捉例外(驅動於連線無進行中語句時發出之'error'事件無人監聽)，使行程終止並把後端錯誤原文印到stderr；現各連線建立即掛監聽，吸收該事件並輸出安全摘要(不含錯誤原文)，不再終止行程，該次操作以既有之失敗通道回報(驅動令進行中與其後之語句reject：整批reject、save預讀reject、del逐筆回ok:0與err)，不新增事件或回傳形狀。
+ * 預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' })、console.log('client error', { mode: 'select', errType: 'DatabaseError', errCode: '57P01' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
+ * opt.logDetail為true時輸出訂閱函數拋出之值或連線中斷之錯誤經遮罩後的副本(console.log(label, 細節))，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console；副本之形態(Error、Map/Set、二進位、函數、存取器等之表示)見wsemi之getDiag。
  * 連線字串與帳密於任何診斷輸出(預設、logDetail、funLog之detail)一律以***遮罩。
  * 對外之錯誤值不含連線憑證：驅動與後端之reject值、error事件之訊息引數、save與del逐筆結果之err，含連線憑證(整串網址、密碼、帳號:密碼、畸形網址之片段等)者為遮罩後之副本(同類別之錯誤，message等字串中之憑證為***，code等非秘密欄位保留)，無憑證者為原物件；本套件自身以固定詞彙組成之錯誤(invalid ...)原樣；單獨之帳號與資料值不遮。
  * 各操作之resolve內容、事件payload(data引數)與時機不受影響(data為呼叫端輸入，屬回傳契約)。
@@ -303,7 +304,7 @@ function WOrmPostgresql(opt = {}) {
         }
     }
 
-    //pgq, 組成pg之查詢設定物件(DDL與交易控制語句除外之所有語句皆經此):
+    //pgq, 組成pg之查詢設定物件(所有語句皆經此, 含DDL與交易控制語句BEGIN、COMMIT、ROLLBACK):
     //  1. null原型: pg以一般物件讀取name、rowMode、types、binary等設定, 一般物件會繼承被汙染之Object.prototype同名屬性
     //  2. queryMode恆為extended: 無綁定參數時pg預設走simple protocol而可堆疊執行多語句, extended協定由伺服器拒絕多語句,
     //     令即使產出之語句因呼叫端環境異常(如表名等建構設定被置入片段)含多語句, 亦不致堆疊執行
@@ -458,13 +459,21 @@ function WOrmPostgresql(opt = {}) {
     //pgClient, pgConnect, pgRun, pgEnd: 驅動(pg)呼叫之單一接縫(R18): src內不得在此以外呼叫new PgClient、client.connect、client.query、client.end(unit-diaglog掃描);
     //驅動與後端拋出或reject之值(含建構時解析連線字串之同步拋錯)為外來值, 一律於此經diag.err遮除憑證後再拋出(無憑證者為原物件, 身分不變; 有則為同類別之副本, code等非秘密欄位保留);
     //各站點之catch、save與del之逐筆err、error事件之訊息皆由此取得已遮罩之值, 故不再逐處包裝; 本套件自身以固定詞彙組成之錯誤不經此(R-DIAG-01 D3)
-    function pgClient() {
+    //pgClient之mode為呼叫之操作別(供診斷摘要); 連線建立後驅動被後端或網路非同步中斷(無進行中語句時)會於client發出'error'事件, 無監聽者即為未捕捉例外而使行程終止並把錯誤原文印到stderr(R18 站點19),
+    //故建立即掛監聽(不待連線成功): 吸收該事件並經diag輸出安全摘要(label與{ mode, errType, errCode }, 不含錯誤原文), 該次操作以既有之失敗通道回報(驅動令進行中與其後之語句reject, 不另造通道);
+    //事件之err為驅動之外來值, 僅交diag(其brief只取類別名與SQLSTATE, logDetail之細節經遮罩)
+    function pgClient(mode) {
+        let client = null
         try {
-            return new PgClient({ connectionString })
+            client = new PgClient({ connectionString })
         }
         catch (err) {
             throw diag.err(err)
         }
+        client.on('error', (errClient) => {
+            diag('client error', { mode, ...diag.brief(errClient) }, () => errClient)
+        })
+        return client
     }
     async function pgConnect(client) {
         try {
@@ -475,7 +484,7 @@ function WOrmPostgresql(opt = {}) {
         }
     }
 
-    //pgRun, q為pgq所組之查詢設定或交易控制語句(BEGIN、COMMIT、ROLLBACK)之字串
+    //pgRun, q為pgq所組之查詢設定(交易控制語句BEGIN、COMMIT、ROLLBACK亦同, R8)
     async function pgRun(client, q) {
         try {
             return await client.query(q)
@@ -549,7 +558,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //transaction
-        await pgRun(client, 'BEGIN')
+        await pgRun(client, pgq('BEGIN', []))
 
         try {
 
@@ -587,7 +596,7 @@ function WOrmPostgresql(opt = {}) {
             }
 
             //commit
-            await pgRun(client, 'COMMIT')
+            await pgRun(client, pgq('COMMIT', []))
 
             return {
                 nIns,
@@ -597,7 +606,7 @@ function WOrmPostgresql(opt = {}) {
         catch (err) {
 
             //rollback, 令已送出之批次一併回滾
-            await pgRun(client, 'ROLLBACK').catch(() => {})
+            await pgRun(client, pgq('ROLLBACK', [])).catch(() => {})
 
             throw err
         }
@@ -712,7 +721,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('createTable')
 
         //connect
         try {
@@ -842,7 +851,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('select')
 
         //connect
         try {
@@ -948,7 +957,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('selectByPk')
 
         //connect
         try {
@@ -1113,7 +1122,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('insert')
 
         //connect
         try {
@@ -1247,7 +1256,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('insertBulk')
 
         //connect
         try {
@@ -1397,7 +1406,7 @@ function WOrmPostgresql(opt = {}) {
         //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
         //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
         let needConn = rowErrs.some((e) => e === null)
-        let client = needConn ? pgClient() : null
+        let client = needConn ? pgClient('save') : null
 
         //connect
         try {
@@ -1815,7 +1824,7 @@ function WOrmPostgresql(opt = {}) {
         //client, 全批皆已於連線之前判定為逐筆失敗者(無任何待處理之筆)無須連線: 逐筆結果與事件不因資料庫是否可連線而異;
         //混合批次(有待處理之筆)時連線失敗仍整批reject, 不回部分結果
         let needConn = reasons.some((r) => r === null)
-        let client = needConn ? pgClient() : null
+        let client = needConn ? pgClient('del') : null
 
         //connect
         try {
@@ -2000,7 +2009,7 @@ function WOrmPostgresql(opt = {}) {
         }
 
         //client
-        let client = pgClient()
+        let client = pgClient('delAll')
 
         //connect
         try {
@@ -2124,7 +2133,7 @@ export default WOrmPostgresql
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 19:03:53 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sat Oct 31 2026 07:22:07 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

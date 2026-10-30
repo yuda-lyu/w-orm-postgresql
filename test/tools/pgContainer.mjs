@@ -23,6 +23,7 @@ export let PORTS = {
     'worm-test-pg-matrix': 5,
     'worm-test-pg66-wellformed': 6,
     'worm-test-pg-diaglog': 7,
+    'worm-test-pg-clienterr': 8,
 }
 let BASE_DEFAULT = 8451
 let PORT_COUNT = 9

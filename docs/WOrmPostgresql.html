@@ -85,9 +85,10 @@
 <li>主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: &lt;原因&gt; at [data[<k>].&lt;主鍵名&gt;])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。</li>
 <li>寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: &lt;原因&gt; at [data[<k>].&lt;路徑&gt;])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[<k>].<invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。</li>
 <li>建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.&lt;名&gt;: &lt;原因&gt;')。
-診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件唯一會寫console之情形為change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)。
-預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
-opt.logDetail為true時輸出訂閱函數拋出之值經遮罩後的副本(console.log(label, 細節))，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console；副本之形態(Error、Map/Set、二進位、函數、存取器等之表示)見wsemi之getDiag。
+診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件會寫console之情形有二：change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)；操作所用之連線於建立後被後端或網路非同步中斷(label為'client error')。
+後者原為未捕捉例外(驅動於連線無進行中語句時發出之'error'事件無人監聽)，使行程終止並把後端錯誤原文印到stderr；現各連線建立即掛監聽，吸收該事件並輸出安全摘要(不含錯誤原文)，不再終止行程，該次操作以既有之失敗通道回報(驅動令進行中與其後之語句reject：整批reject、save預讀reject、del逐筆回ok:0與err)，不新增事件或回傳形狀。
+預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' })、console.log('client error', { mode: 'select', errType: 'DatabaseError', errCode: '57P01' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
+opt.logDetail為true時輸出訂閱函數拋出之值或連線中斷之錯誤經遮罩後的副本(console.log(label, 細節))，opt.funLog為函數時改交由它收(label, safe, detail)而不寫console；副本之形態(Error、Map/Set、二進位、函數、存取器等之表示)見wsemi之getDiag。
 連線字串與帳密於任何診斷輸出(預設、logDetail、funLog之detail)一律以<em><strong>遮罩。
 對外之錯誤值不含連線憑證：驅動與後端之reject值、error事件之訊息引數、save與del逐筆結果之err，含連線憑證(整串網址、密碼、帳號:密碼、畸形網址之片段等)者為遮罩後之副本(同類別之錯誤，message等字串中之憑證為</strong></em>，code等非秘密欄位保留)，無憑證者為原物件；本套件自身以固定詞彙組成之錯誤(invalid ...)原樣；單獨之帳號與資料值不遮。
 各操作之resolve內容、事件payload(data引數)與時機不受影響(data為呼叫端輸入，屬回傳契約)。
@@ -99,7 +100,7 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line72">line 72</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line73">line 73</a>
     </li></ul></dd>
     
 
@@ -613,7 +614,7 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line629">line 629</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line638">line 638</a>
     </li></ul></dd>
     
 
@@ -870,7 +871,7 @@ save/del各筆皆已於連線之前判定為失敗者無須連線(結果與事�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1738">line 1738</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1747">line 1747</a>
     </li></ul></dd>
     
 
@@ -1052,7 +1053,7 @@ null僅可用於欄位等值、$eq、$ne。白名單外之運算子($not $nor $r
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1929">line 1929</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1938">line 1938</a>
     </li></ul></dd>
     
 
@@ -1240,7 +1241,7 @@ INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSON
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1020">line 1020</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1029">line 1029</a>
     </li></ul></dd>
     
 
@@ -1535,7 +1536,7 @@ n為輸入筆數，nInserted為實際插入筆數且成功時恆等於n。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1164">line 1164</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1173">line 1173</a>
     </li></ul></dd>
     
 
@@ -1709,7 +1710,7 @@ nInserted與nModified恆同時出現，無對應行為時填0。
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1299">line 1299</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line1308">line 1308</a>
     </li></ul></dd>
     
 
@@ -2016,7 +2017,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line761">line 761</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line770">line 770</a>
     </li></ul></dd>
     
 
@@ -2237,7 +2238,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line882">line 882</a>
+        <a href="WOrmPostgresql.mjs.html">WOrmPostgresql.mjs</a>, <a href="WOrmPostgresql.mjs.html#line891">line 891</a>
     </li></ul></dd>
     
 
@@ -2400,7 +2401,7 @@ order僅接受{欄名: 'asc'|'desc'}(可接nulls first|last)，欄名與find同�
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 19:03:53 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sat Oct 31 2026 07:22:07 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

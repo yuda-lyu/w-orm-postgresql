@@ -552,14 +552,15 @@ describe('單一出口與站點盤點(R18-7、R-DIAG-01)', function() {
         assert.ok(!hit('let s = \'console.log(1)\''))
     })
 
-    it('R-DIAG-01 diag(站點恰2處: label為字串字面值、safe只含mode與diag.brief展開; 不傳bare等舊參數(第4參數level不用, 預設stdout))', function() {
+    it('R-DIAG-01 diag(站點恰3處: label為字串字面值、safe只含mode與diag.brief展開; 不傳bare等舊參數(第4參數level不用, 預設stdout))', function() {
         let src = srcOf('WOrmPostgresql.mjs')
         let ms = [...src.matchAll(/^\s*diag\('([^']+)', ([^\n]*)\)\s*$/gm)]
-        assert.deepStrictEqual(ms.map((m) => m[1]), ['change handler threw', 'error handler threw'])
+        assert.deepStrictEqual(ms.map((m) => m[1]), ['change handler threw', 'error handler threw', 'client error'])
         for (let m of ms) {
-            assert.strictEqual(m[2], '{ mode, ...diag.brief(errEmit) }, () => errEmit', '呼叫點之safe與getDetail形狀')
+            let v = m[2].match(/^\{ mode, \.\.\.diag\.brief\((\w+)\) \}, \(\) => (\w+)$/)
+            assert.ok(v !== null && v[1] === v[2], `呼叫點之safe與getDetail形狀: ${m[2]}`)
         }
-        assert.strictEqual(count(/\bdiag\(/), 2, 'diag(站點須恰2處, 新增者先審label與safe是否為固定詞彙並補規則帳本站點表')
+        assert.strictEqual(count(/\bdiag\(/), 3, 'diag(站點須恰3處, 新增者先審label與safe是否為固定詞彙並補規則帳本站點表')
     })
 
     it('R-DIAG-01 本套件之宣告: secrets來源為opt.url與組成之連線字串, codes為sqlstate, types為DatabaseError, safeKeys為mode', function() {

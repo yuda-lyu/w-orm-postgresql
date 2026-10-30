@@ -1,6 +1,7 @@
 //假pg.Client(不連線、不需docker): 供unit-diaglog、unit-diagerr以腳本控制驅動於各階段(建構、connect、query、end)拋出或reject之值,
 //令各接縫與站點可被逐一觸發(真驅動之後端錯誤難以造出含憑證之各形態; 真驅動之接線另見api-diaglog)
 //WOrmPostgresql於建構時讀取pg.Client(let PgClient = pg.Client), 故須於建構期間暫時換入假類別, 建構後即還原
+import { EventEmitter } from 'events'
 import pg from 'pg'
 import WOrm from '../../src/WOrmPostgresql.mjs'
 
@@ -18,16 +19,35 @@ export let leakErr = (pw = PW) => Object.assign(new Error(`password authenticati
 /**
  * 產生假pg.Client類別
  *
- * @param {Object} [s={}] 腳本: nw()、conn()、end()回傳要拋出之值(未給為不拋出); query(text, q)回傳{ throws: 值 }者reject該值、回傳其他物件者resolve該物件、回傳undefined者resolve預設結果{ rows: [], rowCount: 0 }
- * @returns {Function} 回傳類別, 其靜態屬性calls為依序之呼叫紀錄(new、connect、各語句文字、end)
+ * @param {Object} [s={}] 腳本: nw()、conn()、end()回傳要拋出之值(未給為不拋出); query(text, q)回傳{ throws: 值 }者reject該值、回傳其他物件者resolve該物件、回傳undefined者resolve預設結果{ rows: [], rowCount: 0 };
+ *   dieAfterConnect()回傳錯誤者, connect成功後驅動於無任何進行中語句時被後端非同步中斷(發'error'事件, 其後之語句皆reject, 同真驅動之行為);
+ *   dieAfterQuery(text)回傳錯誤者, 該語句完成後同樣中斷(如交易中之BEGIN之後)
+ * @returns {Function} 回傳類別, 其靜態屬性calls為依序之呼叫紀錄(new、connect、各語句文字、end; 'error事件無監聽者'為中斷時驅動之'error'事件無人監聽, 真驅動即未捕捉例外而使行程終止),
+ *   raw為送給query之原樣引數(供斷言設定物件之形狀), instances為建構出之各client
  */
 export let fakeOf = (s = {}) => {
     let calls = []
-    class FakeClient {
+    let raw = []
+    let instances = []
+    let notQueryable = () => new Error('Client has encountered a connection error and is not queryable')
+    class FakeClient extends EventEmitter {
         constructor(cfg) {
+            super()
             calls.push('new')
+            instances.push(this)
             if (s.nw) {
                 throw s.nw()
+            }
+        }
+
+        //die, 無'error'監聽者時EventEmitter之emit('error')同步拋出(真驅動為未捕捉例外), 此處記錄後吞下以免污染mocha
+        die(err) {
+            this.dead = true
+            try {
+                this.emit('error', err)
+            }
+            catch (e) {
+                calls.push('error事件無監聽者')
             }
         }
 
@@ -36,21 +56,35 @@ export let fakeOf = (s = {}) => {
             if (s.conn) {
                 throw s.conn()
             }
+            if (s.dieAfterConnect) {
+                this.die(s.dieAfterConnect())
+            }
         }
 
         async query(q) {
             let text = typeof q === 'string' ? q : q.text
             calls.push(text)
+            raw.push(q)
+            if (this.dead) {
+                throw notQueryable()
+            }
+            let res = { rows: [], rowCount: 0 }
             if (s.query) {
                 let r = s.query(text, q)
                 if (r !== undefined) {
                     if (Object.prototype.hasOwnProperty.call(r, 'throws')) {
                         throw r.throws
                     }
-                    return r
+                    res = r
                 }
             }
-            return { rows: [], rowCount: 0 }
+            if (s.dieAfterQuery) {
+                let e = s.dieAfterQuery(text)
+                if (e) {
+                    this.die(e)
+                }
+            }
+            return res
         }
 
         async end() {
@@ -61,6 +95,8 @@ export let fakeOf = (s = {}) => {
         }
     }
     FakeClient.calls = calls
+    FakeClient.raw = raw
+    FakeClient.instances = instances
     return FakeClient
 }
 

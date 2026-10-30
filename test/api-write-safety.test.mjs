@@ -898,6 +898,47 @@ describe('write: statements use a null-prototype extended-protocol query config 
         assert.strictEqual(b.ok, true) //pg 設定物件之 name 不得被汙染(否則兩筆同名 prepared statement 衝突)
         assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3, 21, 22])
     })
+
+    //R8(第162項): 交易控制語句BEGIN、COMMIT、ROLLBACK原為字串(pg內部以一般物件包成設定, 繼承被汙染之Object.prototype), 現亦經pgq
+    for (let [label, props] of [
+        ['name (short)', { name: 'stmt' }],
+        ['name (> 63 chars: the backend would truncate it and pg-protocol prints a warning to stderr)', { name: 'n'.repeat(80) }],
+        ['rowMode', { rowMode: 'array' }],
+        ['queryMode (simple)', { queryMode: 'simple' }],
+    ]) {
+        it(`should run the transaction statements of insert and insertBulk (BEGIN, COMMIT, ROLLBACK) unaffected by a polluted Object.prototype.${label}`, async function() {
+            await reset()
+            for (let [k, v] of Object.entries(props)) {
+                Object.prototype[k] = v
+            }
+            let ok1
+            let ok2
+            let ng1
+            let ng2
+            let errs = []
+            let origErr = console.error
+            console.error = (...a) => errs.push(a.map(String).join(' '))
+            try {
+                ok1 = await settle(mk().insert({ time: 31, name: 'p1' })) //BEGIN、INSERT、COMMIT
+                ok2 = await settle(mk().insertBulk([{ time: 32, name: 'p2' }, { time: 33, name: 'p3' }]))
+                ng1 = await settle(mk().insert([{ time: 34, name: 'p4' }, { time: 99999999999, name: 'big' }])) //第2筆超出INTEGER範圍: INSERT失敗 -> ROLLBACK
+                ng2 = await settle(mk().insertBulk([{ time: 35, name: 'p5' }, { time: 1, name: 'dup' }])) //撞主鍵: INSERT失敗 -> ROLLBACK
+            }
+            finally {
+                console.error = origErr
+                for (let k of Object.keys(props)) {
+                    delete Object.prototype[k]
+                }
+            }
+            assert.ok(ok1.ok && ok1.v.nInserted === 1, jtext(ok1))
+            assert.ok(ok2.ok && ok2.v.nInserted === 2, jtext(ok2))
+            assert.ok(!ng1.ok && !ng2.ok, '失敗路徑應reject(而非因語句被汙染而於他處失敗後被誤判): ' + jtext([ng1, ng2]))
+            assert.ok(/out of range|integer/i.test(ng1.e.message), ng1.e.message)
+            assert.ok(/duplicate key|unique/i.test(ng2.e.message), ng2.e.message)
+            assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3, 31, 32, 33]) //失敗之兩次皆整批回滾
+            assert.deepStrictEqual(errs, [], 'pg不得因汙染之name而輸出警告')
+        })
+    }
 })
 
 
@@ -986,8 +1027,10 @@ describe('write: more input shapes found by review round 3 (opus)', function() {
         }
         let cfgs = seen.filter((c) => typeof c !== 'string')
         let strs = seen.filter((c) => typeof c === 'string')
-        assert.ok(strs.length > 0 && strs.every((x) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(x)), JSON.stringify(strs)) //僅交易控制語句為字串
-        assert.ok(cfgs.length >= 10, `statements=${cfgs.length}`)
+        assert.deepStrictEqual(strs, [], JSON.stringify(strs)) //無字串形式之語句: 交易控制語句BEGIN、COMMIT亦為設定物件(第162項)
+        assert.strictEqual(cfgs.filter((c) => c.text === 'BEGIN').length, 2) //insert、insertBulk各一
+        assert.strictEqual(cfgs.filter((c) => c.text === 'COMMIT').length, 2)
+        assert.ok(cfgs.length >= 14, `statements=${cfgs.length}`)
         assert.ok(cfgs.some((c) => /^CREATE TABLE "tt3_stub"/.test(c.text)), JSON.stringify(cfgs.map((c) => c.text))) //DDL 亦為設定物件形式
         cfgs.forEach((c) => {
             assert.strictEqual(Object.getPrototypeOf(c), null)

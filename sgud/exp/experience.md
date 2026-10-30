@@ -2,6 +2,17 @@
 
 本檔為執行工作時特有之累積經驗,留給後續之嘗試、執行與判斷,由agent自行編列、擴充與維護.
 
+## 第 162 項 pg(client `error` 監聽與交易語句經 `pgq`,2026-10-31 06:55 起;產物在 `tmp/pg/`,結案已清)
+
+- **驅動只在「無進行中語句」時於 client 發 `error` 事件**(`node_modules/pg/lib/client.js` `_handleErrorEvent`:`_errorAllQueries(err)` 之後才 `this.emit('error', err)`;有進行中語句時 `_handleErrorMessage` 把錯誤交給該語句,其後 `end` 因 `_ending` 不再報錯).故「操作中途終止後端」若終止點落在語句執行中(如鎖表令 select 卡住再 `pg_terminate_backend`),**HEAD 也不崩潰**(實測離開碼 0、select 以後端訊息 reject);這是對照組而非修前紅.要重現崩潰須令連線中斷發生在**無進行中語句**之空檔:`pg.Client` 子類別覆寫 `connect()`,於 `super.connect()` 後 `pg_terminate_backend(this.processID)` 並**等到 `end` 事件**(須先掛 `once('end')` 再終止)——此時 client 無語句,`error` 事件即無人接;insert/insertBulk 則覆寫 `query()` 於 `BEGIN` 後同樣終止.真實環境對應事件迴圈忙碌、操作間空檔、`idle_session_timeout`、伺服器重啟.
+- **斷言「行程崩潰」須獨立子行程**:未捕捉例外在 mocha 行程內只會被當成該測試失敗(或被 mocha 之 uncaught 處理收走),分辨不出崩潰與 stderr 內容.做法:`test/tools/clientErrScenario.mjs` 以 JSON 規格(`op`、`kind: terminate|drop|none`、`hold: connect|tx`、`opt`)跑單一操作,最後印 `RESULT:<JSON>`;測試端 `spawn(process.execPath, …, { windowsHide: true })` 收 stdout/stderr/離開碼,斷言離開碼 0、stderr 為空且不含後端原文.WOrmPostgresql 於建構時讀 `pg.Client`,故子類別要在建構期間暫時換入(同 `fakePg.mjs` 之 `build`).
+- **假驅動要像真驅動**:`fakeOf` 之 `FakeClient` 改繼承 `EventEmitter`,中斷時 `emit('error')`;無監聽者時 `EventEmitter` 同步拋出(對應真驅動之未捕捉例外),假驅動記為 `'error事件無監聽者'` 後吞下,其後語句 reject `Client has encountered a connection error and is not queryable`(同真驅動).`raw` 記錄 `query` 之原樣引數,供斷言送出之設定物件形狀(字串 vs null 原型).
+- **`pg_stat_activity` 在交易內有快照快取**:持鎖之連線(`BEGIN` 後)輪詢 `pg_stat_activity` 會一直看到舊狀態而「逾時仍未見語句等鎖」;另開一條 `mon` 連線觀察與終止(本輪對照組測試即因此第一次紅).
+- **汙染 `Object.prototype.name` 之真實後果要實測再寫**:HEAD 下 `pgRun(client, 'BEGIN')` 被 pg 包成 `{ text }` 繼承汙染之 `name`,BEGIN 成為具名語句,**COMMIT 被驅動拒絕**(`Prepared statements must be unique - '<name>' was used for a different statement`),insert/insertBulk reject、無資料寫入;名稱 > 63 字元時另有 `console.error` 三行警告(帶名稱).`rowMode`/`queryMode` 汙染對 BEGIN/COMMIT 無害(HEAD 亦綠,測試保留為對照).探測用 `git show HEAD:src/WOrmPostgresql.mjs` 寫到 `tmp/pg/headsrc/`(連同 `src` 其他檔複製),以動態 `import()` 載入,同一行程比對 HEAD 與修正版.
+- **修前紅取法**:不動索引、不用 stash——腳本把 `git show HEAD:src/WOrmPostgresql.mjs` 暫時寫入 `src/`,經 `quiet-run --lock` 跑新測試,`finally` 還原並以字串比對確認(`tmp/pg/headRed.mjs`);變異同法(`tmp/pg/mutate.mjs`,逐案置換、跑、還原).
+- **站點計數測試隨之更新**:`unit-diaglog` 之 `diag(` 站點由「恰 2」改「恰 3」,並放寬 safe 之正規式為 `{ mode, ...diag.brief(x) }, () => x` 且兩處變數同名;日後再新增 `diag(` 站點先審 label 與 safe 是否固定詞彙並補帳本站點表.
+- **新增 api- 測試檔須在 `PORTS` 登錄**(`api-container-cleanup` 會掃 `let ctName`);本輪登錄 `worm-test-pg-clienterr` = 序號 8(8459,表滿:序號 0–8 全用,再增須擴 `PORT_COUNT` 與文字敘述).
+
 ## 第 187 項 a-pg(wsemi 1.9.33:`DatabaseError` 之 `errType` 收緊,2026-10-30 18:46 起;產物在 `tmp/a-pg/`,結案已清)
 
 - **順序(有效)**:讀共通背景與改用須知 → `npm i wsemi@latest` → **先跑受影響測試**(`unit-diaglog` 立刻多一個紅:wsemi 語料新增 wire 案 `A11`、`C14`、`U22`,「分類完整」案防的就是這個,補 `DISPOSITION` 表即可)→ 收緊斷言 → 取修前紅 → 全套.收緊**不是只改 1 行**:放寬處除 `api-diaglog` 的 `includes`,`unit-diaglog` C01 當時是用「自製的 `class DatabaseError extends Error`(name 未改寫)」繞過,並未覆蓋「自帶 name 的真驅動實例」,要另補一案(C01b:真 `pg.DatabaseError`〔`new pg.DatabaseError(msg, 10, 'error')`〕、同形自製類別、語料 C14 之 `make()`、自設 name 的反例).
