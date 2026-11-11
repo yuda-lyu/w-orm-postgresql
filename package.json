@@ -1,14 +1,14 @@
 {
   "name": "w-orm-postgresql",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "main": "dist/w-orm-postgresql.umd.js",
   "dependencies": {
     "knex": "3.3.0",
     "pg": "^8.23.1",
-    "wsemi": "^1.9.56"
+    "wsemi": "^1.9.57"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.26"
+    "w-package-tools": "^1.1.27"
   },
   "scripts": {
     "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
