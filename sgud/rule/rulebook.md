@@ -214,7 +214,7 @@
   2. **站點全集**(判準:凡把主鍵值、資料字串/鍵名、儲存位址名稱放進 SQL 或連線字串者皆經檢核;**全數已套**):
      | 站點 | 檢核 | 失敗處置 |
      |---|---|---|
-     | 建構 `chkName('url'|'db'|'cl')` | `chkOrmStr`(含 NUL;`isestr` 為真者才檢,非字串用預設;`Object('x')` 包裝為 `not a string`) | 建構 throw `invalid opt.<名>: <原因>`;url、db、cl 先於 pk 檢核 |
+     | 建構 `chkName('url'|'db'|'cl')` | `chkOrmStr`(含 NUL;`isestr` 為真者才檢,非字串〔含 `Object('x')`、`new String('x')` 包裝物件,wsemi 1.9.69 起 `isestr` 只收原始值,W-20〕視為未給用預設,不拋錯,故此站點只收原始字串,`not a string` 不可達) | 建構 throw `invalid opt.<名>: <原因>`;url、db、cl 先於 pk 檢核 |
      | `idReasonOf(pkv)`(`checkPk`、`rowErrOf`、`del`) | 空字串→`string is empty`;`chkOrmStr`(含 NUL);undefined→`primary key is missing`;NaN、包裝物件、無效/裝飾 Date、其他物件→`unsupported primary key value` | 見下〈處置矩陣〉 |
      | `rowErrOf(v, c, k, needKeys)` → `chkOrmData(c, {root:'data[k]'})` | insert、insertBulk(`checkData`)、save(前置迴圈)對每筆資料之字串值與鍵名(巢狀、陣列、Map/Set 等) | insert/insertBulk 整批 reject;save 逐筆 |
      | `rowErrOf` 之 NUL 頂層鍵前置檢核 | 寫入欄名(頂層自有可列舉且值非 `undefined` 之鍵)含 NUL:`chkOrmStr`;NUL 不屬共用檢核(`chkOrmData` 預設不檢),但令 extended 協定 Parse 截斷;與 `cvWrite.colsOf` 同判準(該處為縱深) | insert/insertBulk 整批 reject、save 逐筆,訊息 `invalid data key: contains NUL at [data[k].<invalid key>]`(不屬共用詞彙,案例表 `free` 組須此) |
@@ -249,7 +249,7 @@
 - **外審**:sol(`gpt-6.1-sol` max,18.6 分,額度用盡於收尾前〔22:33,`usage_limit_exceeded`〕,報告 (A)–(E) 已寫出)、minimax(`opencode/minimax-m3.1-flash-free` xhigh,58 分,10 條〔中 6、低 4〕,0 誤報)、agy-flash(`gemini-3.8-flash-high`,16.7 分,3 條;Argon 與 agy-opus 開派前額度 100% 故未派);詳見修正報告〈外審評分表〉(共 19 列:sol 5 條加文件精確度註記 1 列、minimax 10 條、flash 3 條;屬實 18、部分屬實 1〔minimax #1〕、誤報 0).採納而改變實作者:檢核複本獨立於寫入複本(sol #1)、事件交獨立快照與 Date 主鍵快照(sol #2)、全批失敗免連線(sol #3)、欄名文法先於資料良構檢核(sol #4)、事件交寫入複本快照而非檢核複本(flash #1)、單元層補死埠 API 斷言(flash #2)、NUL 資料鍵與 `createTable` 引數改於連線前拒收(minimax #1、#10);僅改文件/帳本者:minimax #3、#4、#6、#7、#8 與 sol 之文件精確度註記;未動者:minimax #2、#5、#9(既有行為,見〈已知限制〉).
 - 已知限制:
   1. `toJSON`/`toPostgres` 之輸出不檢查(無法不執行呼叫端程式碼而得;wsemi 已知限制 ①),可輸出未檢核字串而被改寫為 U+FFFD.
-  2. `String` 包裝物件含成對代理:本批不解包、不改存放形式(主控複審裁示,wsemi 已知限制 ⑧);作為 `opt.*` 時非空包裝為 `not a string`,空包裝視同未給(`isestr`).
+  2. `String` 包裝物件含成對代理:本批不解包、不改存放形式(主控複審裁示,wsemi 已知限制 ⑧);作為 `opt.url|db|cl` 時視同未給取預設、不拋錯(wsemi 1.9.69 起判斷函數只收原始值,W-20 裁定;與 `5`、`{}`、`''` 同一處理,`unit-wellformed` 以記錄建構引數之假 `pg.Client` 斷言實際採用預設).
   3. 資料鍵含孤立代理者,即使值為 `undefined` 亦拒收(`chkOrmData` 走訪全部自有可列舉鍵);NUL 鍵維持既有「值非 `undefined` 才檢」,但第 66 項起改於連線前拒收(`rowErrOf`;`genInsert` 之 `colsOf` 為縱深防禦,經公開 API 不可達).
   4. 值之 NUL 不屬共用檢核,由 PostgreSQL 拒收(訊息非共用詞彙);主鍵與位址名稱之 NUL 屬共用檢核(D2、D3 延伸:name 類同拒 NUL,規格只明列孤立代理).
   5. 「兩份複本內容相同」之前提:`cloneDeep` 不執行呼叫端程式碼(自有存取器於第一次 `cloneDeep(input)` 讀一次並轉為資料屬性);若呼叫端於 `cloneDeep` 內以 Proxy trap 等執行有狀態程式碼,屬 wsemi 已知限制 ①(有狀態 getter 須由後端固定,本套件以兩份複本達成).

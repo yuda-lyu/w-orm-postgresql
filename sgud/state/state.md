@@ -2,7 +2,7 @@
 
 本檔記當前已開發功能之最新狀態(各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證),**只記現況、不寫過程**(過程寫入 `sgud/exp/experience.md`);藍圖(程式碼須長成什麼樣)在 `sgud/rule/rulebook.md`.接續工作先讀本檔.
 
-- 套件:`w-orm-postgresql`,`package.json` 版本 1.0.37(版本號與發布由主控處理,本檔不記發布);相依 `wsemi` ≥ 1.9.33(`getDiagBriefErr` 之 `types` 另以建構子名比對,真驅動 `DatabaseError` 才列為 `DatabaseError`).
+- 套件:`w-orm-postgresql`,`package.json` 版本 1.0.37(版本號與發布由主控處理,本檔不記發布);相依 `wsemi` ≥ 1.9.33(`getDiagBriefErr` 之 `types` 另以建構子名比對,真驅動 `DatabaseError` 才列為 `DatabaseError`);`package.json` 已升 `^1.9.69`(2026-11-19,W-20:判斷函數只收原始值,字串包裝物件作 `opt.url|db|cl` 與 `5`、`{}`、`''` 同視為未給取預設、不拋錯,見規則帳本 R17 站點表第 1 列與已知限制 2;`unit-wellformed` 斷言實際採用預設).
 - 全部測試:`npm test`;各 `api-` 檔自建 docker 容器(`test/tools/pgContainer.mjs` 之 `PORTS` 登錄,埠序號 0–8 已全用〔8 為 `worm-test-pg-clienterr`〕,再增須擴 `PORT_COUNT`),不動使用者既有容器 `postgresql-worm`、`mssql-worm`.
 
 ## 功能現況

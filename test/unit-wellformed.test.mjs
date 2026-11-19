@@ -5,10 +5,12 @@ import pg from 'pg'
 import cvOrmStrCases from 'wsemi/src/_cvOrmStrCases.mjs'
 import WOrm from '../src/WOrmPostgresql.mjs'
 import { cvTable, genInsert, genConflict } from '../src/cvWrite.mjs'
+import { fakeOf, buildRaw } from './tools/fakePg.mjs'
 
 
 //字串良構(第 66 項批 1e)之不需 docker 部分. 規格句見 CLAUDE_rulebook.md R17:
 //  S23 建構時 opt.url/db/cl 含孤立代理字元(或 NUL)-> throw Error('invalid opt.<名>: <原因>'), 不連線; 案例表 opt 組(48 案)逐案執行
+//      非字串之 opt(含字串包裝物件, W-20: 判斷函數只收原始值)視為未給而取預設, 不拋錯
 //  S21、S22 公開 API 於死埠(不存在之連線位址)下的檢核: 先於連線(連線數 0)、批次索引、事件、逐筆處置、事件 payload 為獨立快照(不需 docker)
 //  S25 良構性判定單一擁有者為 wsemi 之 chkOrmStr/chkOrmData: src 內不得再有私有複本(isCleanStr、isWellFormed、孤立代理正則),
 //      主鍵、表名、資料鍵之判定皆經 chkOrmStr, 寫入資料之走訪經 chkOrmData(接線站點見 R17 站點全集)
@@ -48,13 +50,35 @@ describe('wellformed(unit): opt.url / opt.db / opt.cl at construction (cvOrmStrC
                 assert.doesNotThrow(() => WOrm({ ...base, [name]: v }), s)
             }
         })
-        it(`should ignore a non-string opt.${name} (default is used, no throw)`, function() {
-            for (let v of [undefined, null, 5, {}, ['a\ud800'], '']) {
+        //W-20: 判斷函數只收原始值, 字串包裝物件(Object('x')、new String('x'))與 5、{}、'' 同為非字串 opt, 視為未給而取預設, 不拋錯(wsemi 1.9.69 起 isestr(Object('a')) 為 false)
+        it(`should ignore a non-string opt.${name} (default is used, no throw), a String wrapper object included (W-20)`, function() {
+            // eslint-disable-next-line no-new-wrappers
+            for (let v of [undefined, null, 5, {}, ['a\ud800'], '', Object('a'), Object('a\ud800'), new String('a')]) {
                 assert.doesNotThrow(() => WOrm({ ...base, [name]: v }), String(typeof v))
             }
         })
-        it(`should throw 'not a string' for a String wrapper object as opt.${name} (it is not a plain string, and must not slip past the check with a lone surrogate inside)`, function() {
-            assert.throws(() => WOrm({ ...base, [name]: Object('a\ud800') }), (e) => e instanceof Error && e.message === `invalid opt.${name}: not a string`)
+        it(`should treat a String wrapper object as opt.${name} not given: the default is used, not thrown at and not coerced to its string (W-20)`, async function() {
+            //以記錄建構引數之假 pg.Client 觀察實際採用之連線字串與資料表名(不連線、不需 docker)
+            let Fake = fakeOf()
+            let cfgs = []
+            class Rec extends Fake {
+                constructor(cfg) {
+                    super(cfg)
+                    cfgs.push(cfg)
+                }
+            }
+            let given = { url: 'postgresql://username:password@127.0.0.1:5432', db: 'appdb', cl: 'apptbl', pk: 'id' } //db、cl 刻意不同於預設('worm'、'test')
+            let dflt = { url: 'postgresql://user:password@127.0.0.1:5432', db: 'worm', cl: 'test' }
+            // eslint-disable-next-line no-new-wrappers
+            for (let wrapper of [Object('wrapped'), Object('a\ud800'), new String('wrapped'), Object('')]) {
+                cfgs.length = 0
+                Fake.calls.length = 0
+                let w = buildRaw(Rec, { ...given, [name]: wrapper })
+                await w.select()
+                let want = { ...given, [name]: dflt[name] }
+                assert.deepStrictEqual(cfgs, [{ connectionString: `${want.url}/${want.db}` }], `wrapper for ${name}: connection string`)
+                assert.ok(Fake.calls.includes(`select * from "${want.cl}" as "$t"`), `wrapper for ${name}: table name (${JSON.stringify(Fake.calls)})`)
+            }
         })
     }
 
