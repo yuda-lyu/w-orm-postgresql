@@ -1,10 +1,12 @@
 import util from 'util'
 import assert from 'assert'
 import { USER, PW, urlOf, leakErr, fakeOf, build, runOp } from './tools/fakePg.mjs'
+import { collectOp } from './tools/readableInputs.mjs'
 
 
 //rulebook R18(依dspec〈診斷輸出與遮罩〉D3、wsemi R-DIAG-01): 對外錯誤值不含連線憑證之接線測試, 不連線、不需docker(假pg.Client逐一觸發各接縫與站點)
-//  D3-a 外來值(驅動與後端之錯誤、使用端存取器拋出之值)經diag.err: 含憑證者為遮罩後之同類別副本(code等非秘密欄位保留), 無憑證者為原物件(身分不變); 單獨帳號不遮
+//  D3-a 外來值(驅動與後端之錯誤)經diag.err: 含憑證者為遮罩後之同類別副本(code等非秘密欄位保留), 無憑證者為原物件(身分不變); 單獨帳號不遮
+//       使用端存取器與Proxy陷阱拋出之值(複製階段、option與樣本之讀取)不轉出, 一律本套件固定詞彙(第557項對齊A2、A3; F5、F6)
 //  D3-b 本套件自身以固定詞彙組成之錯誤不經遮罩(對固定字串挖空會讓缺口反推短密碼): 密碼恰為其子字串時仍原樣
 //  D3-c save與del逐筆結果之err、error事件之訊息引數皆與reject同源(接縫遮罩後之值), 不含憑證
 //站點全集見sgud/rule/rulebook.md〈R18〉之站點表; 下列各describe之編號(F1..F6、O1..)對應該表
@@ -205,7 +207,7 @@ describe('F4 pgEnd: client.end()之reject為外來值', function() {
 })
 
 
-describe('F5 cloneDeep之catch: 使用端物件之存取器或Proxy陷阱拋出之值為外來值', function() {
+describe('F5 cloneDeep之catch: 使用端物件之存取器或Proxy陷阱拋出之值不轉出, 一律固定詞彙(A3), 憑證不外洩', function() {
 
     let leakGetter = () => ({
         id: 'a',
@@ -220,52 +222,56 @@ describe('F5 cloneDeep之catch: 使用端物件之存取器或Proxy陷阱拋出�
         ['del', (w) => w.del(leakGetter())],
     ]
     for (let [name, run] of cases) {
-        it(`[${name}] 存取器拋出含憑證之錯誤: reject與error事件皆遮罩, 不連線; 拋出無憑證之錯誤者原物件`, async function() {
+        it(`[${name}] 存取器拋出含憑證之錯誤: reject與error事件之訊息皆為固定詞彙invalid data(不含拋出者之文字與憑證), error事件之data為null, 不連線; 拋出無憑證之錯誤者亦同(不再轉出原物件)`, async function() {
             let Fake = fakeOf()
-            let r = await runOp(build(Fake), run)
+            let r = await collectOp(build(Fake), run)
             assert.ok(r.has)
-            assert.ok(r.rej instanceof Error && r.rej.message.indexOf('***') >= 0 && r.rej.code === '28P01', textOf(r.rej).slice(0, 200))
+            assert.ok(r.rej instanceof Error && r.rej.message === 'invalid data: must be a readable value', textOf(r.rej).slice(0, 200))
             noLeak(r.rej, name)
             assert.strictEqual(r.evs.length, 1)
+            assert.strictEqual(r.evs[0].e, 'invalid data: must be a readable value')
+            assert.ok(r.evs[0].d === null, `${name} 事件之data為null`)
             noLeak(r.evs[0].e, `${name} 事件`)
             assert.deepStrictEqual(Fake.calls, [], '於連線之前reject')
 
             let plain = new RangeError('plain getter error')
-            let r2 = await runOp(build(fakeOf()), (w) => w[name]({
+            let r2 = await collectOp(build(fakeOf()), (w) => w[name]({
                 id: 'a',
                 get v() {
                     throw plain
                 }
             }))
-            assert.strictEqual(r2.rej, plain)
+            assert.ok(r2.has && r2.rej !== plain && r2.rej.message === 'invalid data: must be a readable value', String(r2.rej && r2.rej.message))
         })
     }
 
 })
 
 
-describe('F6 createTable讀取樣本物件: 其存取器拋出之值為外來值, 本套件自身之固定詞彙錯誤(ownErr)原樣', function() {
+describe('F6 createTable讀取樣本物件: 其存取器拋出之值不轉出, 一律固定詞彙invalid sample(A2、A3), 憑證不外洩', function() {
 
-    it('樣本之存取器拋出含憑證之錯誤: reject與error事件皆遮罩; 拋出無憑證者原物件', async function() {
-        let r = await runOp(build(fakeOf()), (w) => w.createTable('tdiag', 'id', {
+    it('樣本之存取器拋出含憑證之錯誤: reject與error事件之訊息皆為固定詞彙(不含拋出者之文字與憑證), error事件之data為null; 拋出無憑證者亦同', async function() {
+        let r = await collectOp(build(fakeOf()), (w) => w.createTable('tdiag', 'id', {
             id: 'x',
             get v() {
                 throw leakErr()
             }
         }))
-        assert.ok(r.rej instanceof Error && r.rej.message.indexOf('***') >= 0 && r.rej.code === '28P01', textOf(r.rej).slice(0, 200))
+        assert.ok(r.rej instanceof Error && r.rej.message === 'invalid sample: must be a readable value', textOf(r.rej).slice(0, 200))
         noLeak(r.rej)
         assert.strictEqual(r.evs.length, 1)
+        assert.strictEqual(r.evs[0].e, 'invalid sample: must be a readable value')
+        assert.ok(r.evs[0].d === null, '事件之data為null')
         noLeak(r.evs[0].e, '事件')
 
         let plain = new RangeError('plain')
-        let r2 = await runOp(build(fakeOf()), (w) => w.createTable('tdiag', 'id', {
+        let r2 = await collectOp(build(fakeOf()), (w) => w.createTable('tdiag', 'id', {
             id: 'x',
             get v() {
                 throw plain
             }
         }))
-        assert.strictEqual(r2.rej, plain)
+        assert.ok(r2.has && r2.rej !== plain && r2.rej.message === 'invalid sample: must be a readable value', String(r2.rej && r2.rej.message))
     })
 
     it('樣本為toString拋出含憑證錯誤之物件(組成obj[...]訊息時之字串化執行使用端程式): 遮罩', async function() {

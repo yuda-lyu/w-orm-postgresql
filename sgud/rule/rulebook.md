@@ -43,6 +43,19 @@
   - S28 連線字串與帳密於任何診斷輸出一律以 `***` 遮罩;無憑證之值其 resolve/reject、事件 payload 與時機不變(以修改前 HEAD 產生之 `diagGolden.json` 逐項比對,R18).
   - S29 對外錯誤值(reject、`error` 事件之訊息、`save`/`del` 逐筆 `err`)不含連線憑證:外來值經 `diag.err`,含憑證者為遮罩副本、無憑證者原物件;本套件自身之固定詞彙錯誤不遮(R18;依 dspec〈診斷輸出與遮罩〉D3).
   - S30 驅動呼叫經單一接縫(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),接縫外不得直接呼叫 `new PgClient`、`client.connect|query|end`(R18).
+  - S31 主鍵「未帶」(undefined、null、`''`、鍵不存在)與「給了而無效」(包裝物件、物件、陣列、Symbol、BigInt、NaN、無效 Date、函數、Map、Buffer 等)一律拒絕,不補值、不換值(本套件無 autoGenPk,不隨任何設定改變):insert/insertBulk/save 整批 reject 且 error 事件恰一次,del 該筆 `ok:0`,selectByPk 回 `null`,皆不連線.型別化主鍵(number〔非 NaN,含 ±Infinity〕、boolean、真 Date)為有效值並原樣交給驅動(number、Date 為綁定參數;布林於 WHERE 為 `IS TRUE|IS FALSE` 字面值、於 INSERT 為綁定參數)(PG 欄位型別化;與字串 id 型 ORM 之偏離,見 R19 規則 6)(第 557 項,R19).
+  - S32 讀取即拋錯之輸入依原失敗通道拒絕:資料容器(insert/insertBulk/save/del 之 data、createTable 之樣本)、選項(建構 opt 與成員、option 與 `option.returnList`)、selectByPk 之 pk、order、createTable 之 `cl` 與 `pk` 引數,於判斷函數回 false 之後以 wsemi `chkReadable` 分辨「不可讀」與「可讀而型別不符」;不可讀者:寫入入口與 selectByPk 為 error 事件恰一次後 reject(不連線、不寫入),建構為同步 throw;訊息固定詞彙 `invalid <名稱>: must be a readable value`(不含原例外文字與值)(R19).
+  - S33 可讀而型別不符者照既有處理(`insert(5)` 回空結果、`opt.url` 為 5 或 String 包裝物件用預設、`option.returnList` 非布林為 false、`selectByPk` 無效主鍵回 null),行為不變(R19).
+  - S34 入口階段拒絕之 error 事件,`data` 引數為 `null`(不把不可讀之值交給訂閱函數)(R19).
+  - S35 容器可讀而成員為拋錯之存取器(chkReadable 不呼叫存取器;建構 `opt.<鍵>`、`option.returnList`／`option.autoInsert`、createTable 樣本之成員與陣列 `[0]`),及資料內巢狀之不可讀值於複製階段(`cloneDeep` 拋錯)(第 557 項對齊輪 A2、A3,2026-11-20 改:原為「維持原錯誤文字／原訊息」):一律轉固定詞彙 `invalid opt.<鍵>|option.<鍵>|sample|data: must be a readable value`,**不轉出存取器或陷阱拋出之文字**,走原通道(R19).
+  - S36 `selectByPk` 之不可讀 pk reject(error 事件恰一次);可讀而無效者回 `null`(R19).
+  - S37 探針置於判斷函數回 false 之後(有效輸入不多讀);探針自身之任何拋錯(有狀態之 `Symbol.toStringTag` 存取器於第 n 次讀取才拋)視為不可讀(R19).
+  - S38 〔A1〕選項容器本身不可讀(`opt`／`option` 為已撤銷之 Proxy、`get` 陷阱對所有鍵拋錯等):訊息用容器名 `invalid opt: …`(建構,同步 throw)、`invalid option: …`(insert/save,原通道:error 事件恰一次、`data` 為 `null` 後 reject);容器可讀而只對該鍵之 `get` 陷阱拋錯或成員為存取器者為 `invalid opt.<鍵>`、`invalid option.<鍵>`(S35).`opt`／`option` 為 `ownKeys` 拋錯之 Proxy 或 `Symbol.toStringTag` 拋錯之物件者可讀(本套件不列舉、不讀標籤),照既有(R19).
+  - S39 〔A3 之範圍〕複製處(`cloneInput`,4 個寫入入口之單一擁有者;含 `checkData` 與 `save` 逐筆檢核所作之第 2 份檢核複本:第 1 份複製成功而第 2 份於較深之呼叫堆疊再複製時,過深巢狀〔約 4630 層之窄窗,受 JIT 影響〕或原型上有狀態之 `constructor` 存取器仍可能拋錯)之 catch 不分辨拋出原因:巢狀不可讀值、原型為 `null` 之 Date、過深之巢狀皆為 `invalid data: must be a readable value`;**只到複製處為止**:複製之後讀取複本所拋者(原型上之存取器、繼承之存取器等)屬既有之外來錯誤診斷出口,不擴大——本套件只讀自有可列舉屬性,原型上之 `id` 視為缺主鍵(`invalid id: primary key is missing`)(R19,記入已知限制).
+  - S40 〔A4〕入口階段(選項與資料之讀取、判定與複製)拒絕之 error 事件 `data` 為 `null`;其後之整批拒絕(`invalid id`、`invalid data: <原因> at …`)與逐筆失敗之 `data` **不變**(複本);createTable 讀取可讀而型別不符之樣本(如 `5`)之 error 事件 `data` 為呼叫端給的值(可讀,既有)(R19).
+  - S41 〔A2 之 createTable〕樣本之成員為拋錯之存取器、陣列 `obj[0]` 為拋錯之存取器、`Object.entries` 讀成員拋錯:`invalid sample: must be a readable value`(`mkReadErr`,error 事件 `data` 為 `null`);本函數讀取呼叫端樣本之非本套件錯誤一律如此轉換,不再經 `diag.err` 轉出.可讀而型別不符之樣本(Symbol、原型為 `null` 之物件、`toString` 拋錯之類別實例)之字串化以 `textOfValue`(`String(v)` 失敗退內部標籤)組成 `obj[…] is not an effective object`,不誤判為不可讀(R19).
+  - S43 〔A2 之 order〕`order` 讀取拋錯(陷阱拋錯之 Proxy,含只對 symbol 鍵拋錯者〔chkReadable 之 `ownKeys` 探針只讀字串鍵描述子〕、`getPrototypeOf` 陷阱只於第 1 次讀取拋錯而判斷與探針已不再拋者):`cvOrder` 之 catch 對「非本模組之錯誤」一律轉 `invalid order: must be a readable value`(原 `readOwn` 之 `fail(… ${err.message})` 與末行之 `${msgOf(err)}` 內嵌拋出者之文字,已移除;`readOwn` 不再包 try),可讀而型別或內容不符者(`ours`)照既有(R19).
+  - S42 〔A5、A6〕`selectByPk` 之不可讀 pk(已撤銷之 Proxy、`Symbol.toStringTag` 拋錯、`get` 陷阱全拋錯)reject `invalid pk: must be a readable value`(error 事件恰一次,`data` 為 `null`),可讀而非有效者(`ownKeys` 拋錯之 Proxy、包裝物件、`null`、`{}`、Symbol、`undefined`)回 `null` 無事件;主鍵給了而無效(型別化後端依共同規則一第 6 點):number〔非 NaN〕、boolean、真 Date 為有效並原樣交驅動,其餘(含批次索引 1 者,`at [data[1].<主鍵名>]`)拒絕、不補值、不拆包裝物件,訊息 `unsupported primary key value`(第 557 項對齊輪已合,以 `unit-readable-align` 釘住)(R19).
 
 ## 〔條件(find)之支援範圍〕
 
@@ -271,9 +284,9 @@
 - **`errType` 之類別名(第 187 項,wsemi ≥ 1.9.33)**:`pg` 之 `DatabaseError` 實例自帶 `name = 'error'`(pg-protocol 建構子設 `this.name = name`);wsemi `getDiagBriefErr` 之 `types` 另以建構子名比對,故宣告 `types: ['DatabaseError']` 使真驅動錯誤(含遮罩副本,副本之 `name` 仍為 `error`)之 `errType` 為 `DatabaseError`;自設 `name` 但建構子名不在 `types` 者(如 `Error`、自訂類別)仍為 `Error`.測試**嚴格斷言** `DatabaseError`(不得放寬為 `['Error','DatabaseError']`):`unit-diaglog` C01b(真 `pg.DatabaseError`、同形自製類別、語料 C14 之 `make()`、自設 name 之反例)、`api-diaglog` 〈真後端之無憑證錯誤〉與〈真後端之遮罩副本〉(真 PostgreSQL 23505、22P02).
 - 規則:
   1. **單一出口**:`src` 內無任何 `console.*`、`process.stdout|stderr|emitWarning`(`unit-diaglog` 掃描,註解與字串不計);診斷輸出只經 wsemi `getDiag`;`src/getDiag.mjs` 已刪.
-  2. **驅動呼叫之單一接縫**:`new PgClient`、`client.connect`、`client.query`、`client.end` 各恰 1 處(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),驅動與後端之拋出與 reject 一律於接縫經 `diag.err` 後再拋出;各站點之 catch、`.catch((err) => err.message)` 之逐筆 `err`、`emitError` 之訊息引數皆取自接縫已遮罩之值.故 `diag.err` 全檔恰 9 處(接縫 4、四個 `cloneDeep` catch、`createTable` 讀樣本 1),`diag.mask` 0 處(逐筆 `err` 之遮罩即接縫).新增驅動呼叫須經接縫(`unit-diaglog` 〈驅動呼叫之單一接縫〉掃描).
+  2. **驅動呼叫之單一接縫**:`new PgClient`、`client.connect`、`client.query`、`client.end` 各恰 1 處(`pgClient`、`pgConnect`、`pgRun`、`pgEnd`),驅動與後端之拋出與 reject 一律於接縫經 `diag.err` 後再拋出;各站點之 catch、`.catch((err) => err.message)` 之逐筆 `err`、`emitError` 之訊息引數皆取自接縫已遮罩之值.故 `diag.err` 全檔恰 4 處(皆為接縫;第 557 項對齊輪起,四個 `cloneDeep` catch、`createTable` 讀樣本、`rejectIn` 之 option 存取器拋錯皆改為固定詞彙〔`cloneInput`、createTable catch 之 `ownErr`、`getOpt`〕,不再轉出呼叫端物件拋出之外來值,故不再經 `diag.err`,R19 S35),`diag.mask` 0 處(逐筆 `err` 之遮罩即接縫).新增驅動呼叫須經接縫(`unit-diaglog` 〈驅動呼叫之單一接縫〉掃描).
   3. **外來值 vs 固定詞彙之判定**:驅動、後端、使用端存取器/Proxy 陷阱/`toString` 拋出者為外來值(包);本套件以固定詞彙組成者不包.`createTable` 之驗證 catch 以 `ours`(WeakSet,`ownErr` 登記)區分(其讀樣本物件之存取器為使用端程式).
-  4. **站點全集**(盤點:`rg -n "Promise\.reject\(|diag\.err\(|throw " src/WOrmPostgresql.mjs`,`Promise.reject` 恰 28 處〔createTable 3、select 4、selectByPk 2、insert 4、insertBulk 4、save 4、del 3、delAll 4,`unit-diaglog` 〈reject站點盤點〉鎖定〕;新增站點須先判外來/自身並補本表;行號為 mig-pg 完成時):
+  4. **站點全集**(盤點:`rg -n "Promise\.reject\(|diag\.err\(|throw " src/WOrmPostgresql.mjs`,`Promise.reject` 恰 25 處〔createTable 3、select 4、selectByPk 2、insert 3、insertBulk 3、save 3、del 2、delAll 4,另入口階段共用之 `rejectIn` 1(第 557 項,R19;對齊輪起各入口之複製階段改走 `rejectIn`,故 insert、insertBulk、save、del 各少 1);`unit-diaglog` 〈reject站點盤點〉鎖定〕;新增站點須先判外來/自身並補本表;行號為 mig-pg 完成時):
 
      | # | 站點 | 值之來源 | 處置 | 測試 |
      |---|---|---|---|---|
@@ -283,8 +296,8 @@
      | 4 | `pgEnd`(`:445`) | `client.end()` reject(`finally` 內) | 外來:接縫 | `unit-diagerr` F4 |
      | 5 | insertBatches 之 `throw err`(`:555`) | ROLLBACK 後重拋 BEGIN/INSERT/COMMIT 之錯誤(已於接縫遮罩) | 沿用接縫之值 | F3 |
      | 6 | insertBatches 之 ROLLBACK `.catch(() => {})` | ROLLBACK 自身之 reject | 吞下,無輸出(不取代原錯誤) | F3 |
-     | 7 | insert、insertBulk、save、del 之 `cloneDeep` catch(`:1050`、`:1184`、`:1315`、`:1754`) | 呼叫端物件之存取器/Proxy 陷阱拋出之值 | 外來:`diag.err` | `unit-diagerr` F5 |
-     | 8 | createTable 之驗證 catch(`:662`) | 讀樣本物件(存取器、`toString`、Proxy)拋出之值 | 外來:`ours.has(err) ? err : diag.err(err)` | `unit-diagerr` F6 |
+     | 7 | insert、insertBulk、save、del 之複製(`cloneInput`,`:545`;站點 `:1236`、`:1374`、`:1509`、`:1959`;第 2 份檢核複本 `:275`、`:1538`) | 呼叫端物件之存取器/Proxy 陷阱拋出之值 | 轉固定詞彙 `invalid data: must be a readable value`(`ownErr`,`rejectIn`;第 557 項對齊輪起,原為外來:`diag.err`) | `unit-diagerr` F5;`unit-readable-align` A3 |
+     | 8 | createTable 之驗證 catch(`:831`) | 讀樣本物件(存取器、`toString`、Proxy)拋出之值 | 轉固定詞彙 `invalid sample: must be a readable value`(`ownErr`,`inRd`;第 557 項對齊輪起,原為外來:`ours.has(err) ? err : diag.err(err)`);本套件自身之固定詞彙錯誤(`ours`)原樣 | `unit-diagerr` F6;`unit-readable-align` A2 |
      | 9 | createTable 自身之 `obj[…] is not an effective object`、`invalid createTable: …`(`:313`、`:322`、`:327`、`:333`、`:651`) | 本套件固定詞彙 | 不包(`ownErr`) | `unit-diagerr` O1–O4 |
      | 10 | select、delAll 之 cvFind/cvOrder 錯誤(`:776`、`:1942`)與 buildSelect/buildDelete 錯誤(`:794`、`:1952`) | 本套件(含呼叫端欄名與使用端 hook 訊息之回顯,見已知限制 1) | 不包 | O5–O7、O16 |
      | 11 | insert、insertBulk 之 checkData(`:1065`、`:1199`),save 整批檢核(`:1347`),checkKeys(`:255`) | 本套件固定詞彙(`invalid id|data`) | 不包 | O8–O10、O14 |
@@ -297,11 +310,12 @@
      | 18 | 建構子 `throw`(`:82`、`:126`) | 本套件固定詞彙(不回顯值) | 不包 | `unit-diaglog` R18-8 |
      | 19 | `pgClient(mode)` 之 `client.on('error', …)`(連線建立後被後端或網路非同步中斷;驅動僅在**無進行中語句**時於 client 發 `error` 事件,無監聽者即未捕捉例外使行程終止並把錯誤原文印到 stderr;**第 162 項已掛**) | 驅動(外來值) | `diag('client error', { mode, ...diag.brief(errClient) }, () => errClient)`:預設只輸出標籤與摘要〔`errType`、`errCode` 如 `DatabaseError`、`57P01`〕,`logDetail` 為遮罩後細節,`funLog` 取代 console;不經 `diag.err`(不對外);該次操作以既有失敗通道回報(驅動令其後語句 reject:`not queryable`) | `unit-clienterr` C1–C3;`api-clienterr`(真後端) |
      | 20 | console 出口 | 無(僅 getDiag) | — | 單一出口掃描 |
+     | 21 | `rejectIn(mode, err)`(第 557 項,R19):入口階段(option、data、pk 之讀取)拒絕 | 固定詞彙(`invalid data|option|option.<鍵>|pk: must be a readable value`,`ownErr` 登記);option 成員為存取器拋錯亦轉固定詞彙(第 557 項對齊輪起,原為外來值經 `diag.err`) | 固定詞彙不包、不經 `diag.err`;error 事件 `data` 為 `null` | `unit-readable-probe`;`unit-readable-align`;`unit-diaglog` 〈驅動呼叫之單一接縫〉(diag.err 4) |
   5. **回傳契約**:無憑證之值與修改前相同(身分、訊息、事件 payload 與先後);`test/tools/diagScenario.mjs` 情境之結果逐項等於 `test/tools/diagGolden.json`(由修改前 HEAD 產生,第 161 項**未重產**,仍全綠),五種選項組合皆同(`api-diaglog` 〈回傳契約不變〉).含憑證者(S29)為預期之行為變化,見 README〈Breaking changes〉.
 - 盤點指令(可重跑;判準括號內為預期):
   - `rg -n "console\.|process\.(stdout|stderr|emitWarning)" src` (僅註解:無程式碼)
   - `rg -n "new PgClient|client\.(connect|query|end)\(" src/WOrmPostgresql.mjs` (程式碼各恰 1,於 `pgClient`、`pgConnect`、`pgRun`、`pgEnd`;其餘為註解)
-  - `rg -n "diag\.err\(" src/WOrmPostgresql.mjs` (9 處程式碼,另註解)、`rg -n "diag\(" src/WOrmPostgresql.mjs` (3 處,第 162 項;其餘 2 為 emitChange/emitError 之 catch)、`rg -n "client\.on\(|pgClient\(" src/WOrmPostgresql.mjs` (`client.on('error'` 恰 1 處於 `pgClient` 內;`pgClient('<操作名>')` 8 個呼叫點:createTable、select、selectByPk、insert、insertBulk、save、del、delAll)、`rg -n "from 'wsemi/src/getDiag(Secrets)?\.mjs'" src` (各 1)、`ls src/getDiag.mjs` (不存在)
+  - `rg -n "diag\.err\(" src/WOrmPostgresql.mjs` (10 處程式碼,另註解)、`rg -n "diag\(" src/WOrmPostgresql.mjs` (3 處,第 162 項;其餘 2 為 emitChange/emitError 之 catch)、`rg -n "client\.on\(|pgClient\(" src/WOrmPostgresql.mjs` (`client.on('error'` 恰 1 處於 `pgClient` 內;`pgClient('<操作名>')` 8 個呼叫點:createTable、select、selectByPk、insert、insertBulk、save、del、delAll)、`rg -n "from 'wsemi/src/getDiag(Secrets)?\.mjs'" src` (各 1)、`ls src/getDiag.mjs` (不存在)
 - 測試與指令:
   - `npx mocha --no-parallel test/unit-diaglog.test.mjs test/unit-diagerr.test.mjs --timeout 180000`(不需 docker,假 `pg.Client`:`test/tools/fakePg.mjs`).`unit-diaglog`:wsemi 語料 wire 子集之接線(DISPOSITION 表逐案處置,日後 wsemi 新增 wire 案即轉紅)、選項與出口、秘密來源接線、單一出口與站點盤點、建構函式訊息;`unit-diagerr`:對外錯誤值之站點矩陣(F1–F6)與固定詞彙原樣(O1–O16).形態類測試(字串、鍵、Symbol、包裝物件、Proxy、二進位、Error、循環、數字秘密、摘要代碼集合、秘密導出)已刪,由 wsemi 語料於 wsemi 內測一次(D5).
   - `npx mocha --no-parallel test/api-diaglog.test.mjs --timeout 180000`(需 docker,容器 `worm-test-pg-diaglog`、埠序號 7):預設/logDetail/funLog 實測 console、回傳契約 golden、憑證不外洩、**真驅動之對外錯誤值**(PG-R3 畸形網址 8 操作;後端回顯資料值等於密碼之 insert/insertBulk/select/delAll/createTable/save/del)。
@@ -317,6 +331,58 @@
   3. (已於第 162 項解決,見 R8)`BEGIN/COMMIT/ROLLBACK` 原不經 `pgq`:`Object.prototype.name` 資料型汙染時 pg 當具名語句,現已經 `pgq`.
   4. wsemi 規格之已知限制(dspec §5)適用:reject 清單之短密碼(< 4 字元)不遮、單獨帳號於 reject 不遮、私有欄位無法複製至副本、Node < 20.16 無 `util.types` 時 Proxy 不可偵測等(`pg` 之 `DatabaseError` 之 `errType` 見上〈`errType` 之類別名〉,wsemi ≥ 1.9.33 起已為 `DatabaseError`).
   5. 驅動/程式庫自身輸出(pg-connection-string 之 sslmode 警告、knex 固定文字警告、`DEBUG=knex:*`)不經單一出口(README 載明);第 153 項之盤點結論不變.
+
+## R19 讀取即拋錯之輸入依原失敗通道拒絕(wsemi `chkReadable`);主鍵給了而無效之處置(第 557 項;S31–S43〔S38–S43 為對齊輪〕;共同規則一至四 `C:\opensrcOper\dnow\20261120043625\common-rules.md`;wsemi R-READABLE-01、dspec〈輸入參數之檢測機制〉K2、K3、V17、V19、V20、§11)
+
+- **規則**:
+  1. **探針單一擁有者 = wsemi `chkReadable`**(`import chkReadable from 'wsemi/src/chkReadable.mjs'`,`WOrmPostgresql.mjs` 與 `cvFind.mjs` 各 1 次);本套件無本地探針.判斷函數(`isestr`、`isbol`、`iseobj`、`isearr`)對讀取即拋錯之值(已撤銷之 Proxy、`Symbol.toStringTag` 拋錯、陷阱拋錯、陣列 `length` 或 `[0]` 拋錯)一律回 false 而不拋錯;呼叫端給的值於判斷函數回 false **之後**才以 `chkReadable` 分辨「不可讀」與「可讀而型別不符」(有效輸入不多讀,S37).
+  2. **不可讀者走原失敗通道**(S32):寫入入口(insert、insertBulk、save、del、createTable)與 selectByPk 為 `rejectIn`(error 事件恰一次、`data` 為 `null`〔S34〕,再 reject,不連線、不寫入、不重設快取),建構為同步 throw;訊息固定詞彙 `invalid <名稱>: must be a readable value`,名稱:`data`、`sample`(createTable 之樣本)、`option`、`option.returnList`、`pk`(selectByPk 之主鍵、createTable 之 `pk` 引數)、`cl`(createTable 之表名引數)、`order`、`opt`、`opt.url|db|cl|pk|useCache`.可讀而型別不符者照既有(S33).
+  3. **選項容器本身不可讀**(`option`／`opt` 為已撤銷之 Proxy 等,讀其成員即拋錯):名稱用容器名(`invalid option`、`invalid opt`),`getOpt`／`getOptVal` 於 catch 內以 `chkReadable(容器)` 區辨;成員為拋錯之存取器而容器可讀者(chkReadable 不呼叫存取器)轉**固定詞彙 `invalid option.<鍵>`／`invalid opt.<鍵>`**(第 557 項對齊輪改:原維持原錯誤文字;依規則四.2 之 07:0x 更正,本套件拒絕呼叫端輸入時訊息一律固定詞彙,不轉出呼叫端物件拋出之文字),insert/save 之該讀取在 `rejectIn` 通道內(error 事件恰一次、`data` 為 `null`;原 `get(option, …)` 在 try 外,option 為已撤銷 Proxy 時 reject 而無 error 事件).`rejectIn` 之 err 恆為 `ownErr`(固定詞彙),不再經 `diag.err`.
+  4. **資料容器之探針** `isUnreadableData(data)`(`iseobj`、`isearr` 皆回 false 之後):`chkReadable(data, { elements: 'first' })`(標籤、陣列長度與 `[0]`),標籤為 `[object Object]` 才另加 `{ ownKeys: true }`(型別陣列、Buffer 不列舉全部索引),長度為 1 之陣列另於 try 自讀 `[0]`(存取器);**整個探針包在 try,探針自身之拋錯(有狀態之 `Symbol.toStringTag` 存取器於第 n 次讀取才拋)視為不可讀**.`order` 同形:`isUnreadableOrder`(`cvFind.mjs`,於檢核失敗後探,包 try),不可讀為 `invalid order: must be a readable value`.
+  5. **複製階段之巢狀不可讀值**(資料內之 `id` 屬性、列之成員、陣列其後之元素、欄位值為已撤銷 Proxy 或拋錯之存取器,及原型為 `null` 之 Date、過深之巢狀):`cloneInput`(`cloneDeep` 之單一擁有者,4 個寫入入口)轉**固定詞彙 `invalid data: must be a readable value`**(第 557 項對齊輪改:原維持 `cloneDeep` 拋出之原訊息;共同規則四.3 之 07:0x 更正),走原通道(整批 reject、error 事件恰一次、`data` 為 `null`)、不補值;複製處之 catch 不分辨頂層與巢狀、不分辨拋出原因;複製之後讀取者不擴大(S39).`find` 之不可讀由 wsemi `cvOrmFind` 擁有,已為 `invalid find: an exception was thrown while reading the condition at [find]`(固定詞彙、不含原例外文字、error 事件恰一次、不連線),**核實不改**(措辭沿用 wsemi,與 `must be a readable value` 不同).
+  6. **主鍵(規則一之本套件形態)**:本套件無 `autoGenPk`(主鍵從不補值),故不存在「給了而非字串被靜默換成新主鍵」;未帶與給了而無效者本就一律拒絕(R5、R10、R17,`idReasonOf`):`undefined`／鍵不存在 `primary key is missing`、`''` `string is empty`、`null`、包裝物件、物件、陣列、Symbol、BigInt、NaN、無效 Date、函數、Map、Buffer 皆 `unsupported primary key value`.**偏離共同規則一(不改)**:PostgreSQL 主鍵欄位型別化(INTEGER、FLOAT8、BOOLEAN、TIMESTAMPTZ),number(非 NaN)、boolean、真 Date 為有效主鍵值並原樣為綁定參數(布林於 WHERE 為 `IS TRUE|IS FALSE` 字面值,R6 bool 節點),README、R5、W3 與 `api-matrix` 皆如此;其餘「給了而非字串」者之訊息為既有 `unsupported primary key value`(不為 `not a string`).改為「非字串一律拒絕」須主控裁示(破壞性:型別化主鍵全廢).
+- **站點全集**(判準:凡以 wsemi 判斷函數判定「呼叫端給的值」者;盤點:`rg -n "\b(iseobj|isearr|isestr|isbol|isnum|isarr|isstr|isint)\(" src`;行號為 2026-11-20 寫入時):
+
+  | # | 站點 | 值之來源 | 判準 | 測試 |
+  |---|---|---|---|---|
+  | 1 | 建構 `getOptVal`(`:100`)+ `chkOptReadable`(`:115`) | opt 容器 | **已套**(容器不可讀 `invalid opt`;成員存取器 `invalid opt.<名>`,第 557 項對齊輪) | `unit-readable-probe` 〈constructor〉;`unit-readable-align` A1、A2 |
+  | 2 | 建構 `url`、`db`、`cl`、`useCache`、`pkName`(`:118`、`:128`、`:138`、`:148`、`:156`) | opt 成員 | **已套**(`invalid opt.<名>`;可讀而型別不符用預設) | 同上(5 成員 × 2 不可讀夾具;6 種型別不符 × 5 成員) |
+  | 3 | `idReasonOf` 之 `isnum(pkv)`(`:179`) | `typeof pkv === 'number'` 已確認之原始值 | 不適用(內部) | — |
+  | 4 | `getValueType` 之 `isstr/isnum/isint/isbol`(`:315-322`) | createTable 樣本之**成員值**,只作型別推定,不讀成員 | 不適用(邊界:不可讀成員得 JSONB 欄,測試釘住) | `unit-readable-probe` 〈boundary: a sample member〉 |
+  | 5 | `genSqlForCreateTable` 之 `iseobj(obj)`(`:347`) | createTable 已檢核之 obj | 不適用(重複檢核之縱深) | — |
+  | 6 | `getErrMsg` 之 `isestr(m)`(`:408`) | 錯誤物件之 message(內部) | 不適用 | — |
+  | 7 | `getOpt`(`:489`)、`getOptBol`(`:503`) | option 容器、`option.returnList`、`option.autoInsert` | **已套**(容器 `invalid option`;成員存取器 `invalid option.<鍵>`,對齊 A1、A2) | `unit-readable-probe` 〈option〉;`unit-readable-align` A1、A2;`api-write-safety` 〈R19〉 |
+  | 8 | `isUnreadableData`(`:490-495`) | 見規則 4 | **已套** | 同上 |
+  | 9 | createTable 之 `cl`、`pk`、樣本(`:797-825`)與其 catch(`:831`) | 呼叫端 | **已套**(`invalid cl|pk|sample`;非本套件錯誤〔樣本之成員存取器、`obj[0]`、字串化〕一律 `invalid sample`,S41) | `unit-readable-probe` 〈createTable〉;`unit-readable-align` A2;`unit-diagerr` F6 |
+  | 10 | select/selectByPk 之 `isarr(cache)`、`isarr(res)`、`isarr(rows)`、`iseobj(v)`(`:908`、`:964`、`:1032`、`:1079`、`:1092`) | 快取與驅動回傳之列(內部) | 不適用 | — |
+  | 11 | selectByPk 之 `checkPk(pk)` + 探針(`:1018`) | 呼叫端 pk | **已套**(`invalid pk`;可讀而無效回 null) | 同上;`api-write-safety` 〈R19〉 |
+  | 12 | insert(`:1167`、`:1172-1177`)、insertBulk(`:1317-1321`)、save(`:1459-1463`、option `:1488`)、del(`:1912-1916`) 之入口 | 呼叫端 data、option | **已套** | 同上 |
+  | 13 | `isarr(data)`(`:1204`、`:1345`、`:1494`、`:1937`) | `cloneDeep` 後之複本 | 不適用(已檢核) | — |
+  | 14 | `iseobj(_v)`(`:1603`)、`isearr(rows)`(`:1701`) | 驅動回傳之列 | 不適用 | — |
+  | 15 | select/delAll 之 find(`cvFind` → wsemi `cvOrmFind`) | 呼叫端條件 | 已拒絕,**核實不改**(規則 5) | `unit-readable-probe` 〈select and delAll〉 |
+  | 16 | select 之 order(`cvFind.mjs` `cvOrder` + `isUnreadableOrder`) | 呼叫端 order | **已套** | 同上 |
+  | 17 | `cloneInput`(`:545`)+ insert(`:1236`)、insertBulk(`:1374`)、save(`:1509`)、del(`:1959`)之複製,及第 2 份檢核複本(`checkData` `:275`、save 逐筆 `:1538`)(第 557 項對齊輪,A3) | 呼叫端 data 之巢狀值 | **已套**(`invalid data`,`rejectIn`/`emitError`;不分辨拋出原因;第 2 份複本於呼叫堆疊較深處複製仍可能拋錯,同樣轉換) | `unit-readable-align` A3(16 形狀 × 4 入口);`unit-diagerr` F5;`unit-pk-given` 〈an id inside the data…〉;`api-write-safety` 〈S5〉〈R19〉 |
+
+- **盤點指令**(可重跑;判準括號內為預期):
+  - `rg -n "chkReadable\(" src` (`WOrmPostgresql.mjs` 9 處程式碼、`cvFind.mjs` 2 處;`unit-readable-probe` 〈site inventory〉鎖定);`rg -n "^import chkReadable" src` (各 1)
+  - `rg -n "probeReadable|assertReadable" src` (空)
+  - `rg -n "return rejectIn\(" src/WOrmPostgresql.mjs` (11:insert 3〔option、data、複製〕、insertBulk 2、save 3、del 2、selectByPk 1)
+  - `rg -n "cloneDeep\(data\)|data = cloneInput\(" src/WOrmPostgresql.mjs` (`return cloneDeep(data)` 1〔cloneInput 本體〕、快取 `_cache[key] = cloneDeep(data)` 1、`data = cloneInput(data)` 4;`data = cloneDeep(` 0)
+- **測試與指令**:
+  - `npx mocha --no-parallel test/unit-pk-given.test.mjs test/unit-readable-probe.test.mjs test/unit-diaglog.test.mjs --timeout 180000`(不需 docker,假驅動 `test/tools/fakePg.mjs` + `test/tools/readableInputs.mjs`;`Fake.calls` 為空陣列即未連線、資料庫不變).`unit-pk-given`:主鍵未帶/給了而無效/型別化主鍵/無效主鍵之 selectByPk/資料內不可讀 id(S31、S35、S36;對 HEAD 之 src 亦綠:本套件於規則一原已合規,為釘住用);`unit-readable-probe`:S32–S37;`unit-readable-align`(第 557 項對齊輪):A1~A6 逐代號之釘住(S38–S42),含對照組(`npx mocha --no-parallel test/unit-readable-align.test.mjs --timeout 180000`).
+  - `npx mocha --no-parallel test/api-write-safety.test.mjs --timeout 180000 -g R19`(需 docker,容器 `worm-test-postgresql-write`):真資料表之不變、INTEGER 主鍵原樣寫入.
+- **驗證(第 557 項,2026-11-20)**:修前紅(新測試跑於 HEAD 之 `src`,`git archive HEAD src`):`unit-readable-probe` 紅 58 案/113〔建構 11、資料容器 22、option 7、createTable 10、find/order 3、selectByPk 2、盤點 3〕,`unit-pk-given` 0 紅/121(規則一於本套件原已合規,為釘住用),`api-write-safety` 〈R19〉2/4 紅;變異 36 個(`tmp/oro557e/mut.mjs`:規則一 9、規則二 27)35 殺死、1 等價存活(E22:`isUnreadableData` 之 `chkReadable(data, { elements: 'first' })` 與其後 try 內之 `length`、`[0]` 自讀為縱深重複);複審(sonnet 子代理,唯讀):1 條屬實已修(有狀態標籤存取器於探針內才拋)、2 條措辭/文字(find 措辭沿用 wsemi;布林 `IS TRUE` 為既有)已於本節載明.
+- **驗證(第 557 項對齊輪 oro557e2,2026-11-20)**:同一探針(`probe.mjs`,329 格:A1~A6 × 入口 × 輸入)對「修前 = 對齊輪開始時之工作樹快照」與修後各跑一次,83 格不同、246 格逐字相同(A1 15、A4 20、A5 12、A6 168 全部不變 = 已合;A2 19 格〔建構 10、option 4、createTable 樣本 5〕、A3 64 格改變);修前紅(快照 `src` 搭現行測試):114 案紅〔`unit-readable-align` 84/144、`unit-readable-probe` 6、`unit-pk-given` 12、`unit-diagerr` 5、`unit-diaglog` 2、`api-write-safety` 5〕;變異 67 項(既有 36 + 對齊輪新增)65 殺死〔E23 僅靜態盤點案可殺〕、2 等價存活(E22、E11b);全套 `npm test` 4218 passing / 610 pending / 0 failing;複審(sonnet,唯讀)屬實 3 條已修(第 2 份檢核複本、`order` symbol 鍵與 `getPrototypeOf` 一次性拋錯、createTable 樣本字串化誤判),2 條待裁示/條款允許已載(已知限制 6、7;A3 範圍之 `Error.message`).證據與報告在 `C:\opensrcOper\dnow\20261120043625\agent-out\oro557e2-修正報告.md`.
+- **已知限制與偏離**:
+  1. 規則 6:型別化主鍵之偏離(主控已裁維持,07:0x).
+  2. `find` 不可讀之訊息為 wsemi 之固定詞彙(`invalid find: an exception was thrown while reading the condition at [find]`),不是 `must be a readable value`.
+  3. (第 557 項對齊輪已解除:`createTable` 之樣本成員為拋錯之存取器者現為 `invalid sample`,error 事件 `data` 為 `null`;S41.)僅剩:`createTable` 讀取**可讀而型別不符**之樣本(如 `5`)時,error 事件 `data` 為呼叫端給的值(可讀,既有契約,S40).
+  4. 複製之後讀取複本所拋者(原型上之存取器、繼承之存取器、`Error` 值之 `message` 等)不在 A3 範圍:本套件只讀自有可列舉屬性,原型上之 `id` 視為缺主鍵(`invalid id: primary key is missing`,`data` 為複本);其餘讀取複本之外來錯誤屬各庫既有之診斷出口(dspec V20 ⑥ 不保證),不擴大(主控 07:5x 裁,依 oro557a2;S39).
+  5. `chkReadable` 之 `ownKeys` 只對標籤為 `[object Object]` 者給(wsemi 批 10 修正型別陣列、Buffer 之全索引列舉前之繞過;`isUnreadableData`、`isUnreadableOrder`).
+  6. 只於**第 1 次讀取**才拋錯之頂層 `data`(如 `get`／`ownKeys` 陷阱第 1 次拋、之後正常之 Proxy):判斷函數(已吞下拋錯)先讀,探針再讀時已不拋,故判為「可讀而型別不符」而回空結果、無 error 事件;屬規則二.1「探針置於判斷函數回 false 之後」之固有限制(輸入為非確定性,有狀態之 `Symbol.toStringTag` 則因探針整個包 try 且逐次讀取皆測,S37,不在此限)(複審 sonnet 實測).
+  7. `createTable` 讀取可讀而無效之引數(如 `cl` 不合)而拒絕時,error 事件之 `data` 為呼叫端之 `arr`,其巢狀成員若為不可讀值(`{ a: revoked }`,只作 JSONB 型別推定而不讀)亦隨之交給訂閱函數;與 A4「不把不可讀之值交給訂閱函數」之字面有落差,待主控裁示(見 state.md 第 557 項待裁示 3).
+  4. `option.autoInsert` 之值不經判斷函數(僅真假值),不探針(已撤銷之 Proxy 視為真值);`opt.logDetail`、`opt.funLog` 由 wsemi `getDiag` 讀取(只收 `true`/函數,其餘忽略),本套件不探.
+  5. `createTable` 樣本之成員值僅作型別推定(不可讀成員得 JSONB 欄,不拒絕).
 
 ## 案例表閘門最終結果(第 3 次執行 v10:定稿實作 vs HEAD `8133f58`;工具 `tmp/cases/gate.mjs v10`;歷程 v8 → v9〔wsemi 組加註 `schema` 旗標重跑〕→ v10〔外審 sol 後 `src/emitKnex.mjs`、`buildSql.mjs`、`WOrmPostgresql.mjs` 有改,整表重跑;runner 加整表全欄快照 `unchangedFull`、預言機改在 select 之前取得;歸類器 patch 4〕)
 

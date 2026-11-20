@@ -942,7 +942,7 @@ describe('write: statements use a null-prototype extended-protocol query config 
 })
 
 
-describe('write: exceptions thrown by caller data while it is copied are reported with one error event (S5)', function() {
+describe('write: exceptions thrown by caller data while it is copied are reported with one error event and the fixed wording (S5, S35)', function() {
     let bad = (extra = {}) => {
         let o = { time: 1, ...extra }
         Object.defineProperty(o, 'name', {
@@ -960,15 +960,15 @@ describe('write: exceptions thrown by caller data while it is copied are reporte
         ['del', (wo) => wo.del(bad())],
     ]
     calls.forEach(([mode, fn]) => {
-        it(`should reject ${mode} with that Error, emit one error event and write nothing`, async function() {
+        it(`should reject ${mode} with the fixed wording (not the thrown text), emit one error event with data null and write nothing`, async function() {
             await reset()
             let evs = []
             let wo = mk()
-            wo.on('error', (m) => evs.push(m))
+            wo.on('error', (m, d) => evs.push([m, d]))
             let r = await settle(fn(wo))
             assert.strictEqual(r.ok, false)
-            assert.ok(r.e instanceof Error && /getter boom/.test(r.e.message), String(r.e))
-            assert.deepStrictEqual(evs, [mode])
+            assert.ok(r.e instanceof Error && r.e.message === 'invalid data: must be a readable value', String(r.e)) //S35(A3): 複製階段之存取器拋錯轉固定詞彙, 不轉出'getter boom'
+            assert.deepStrictEqual(evs, [[mode, null]])
             assert.deepStrictEqual((await rows('time')).map((x) => x.time), [1, 2, 3])
         })
     })
@@ -1639,5 +1639,134 @@ describe('write: pk is read only from own enumerable properties of the data (R10
         let i = await wo.insert(JSON.parse('{"time":4,"name":"dd"}'))
         assert.strictEqual(i.nInserted, 1)
         assert.deepStrictEqual((await rows('time, name')).map((x) => [x.time, x.name]), [[3, 'cc2'], [4, 'dd']])
+    })
+})
+
+
+//R19(第557項, S31、S32、S34、S36): 真PostgreSQL之接線 - 讀取即拋錯之輸入於入口階段拒絕, 資料表不變; 型別化主鍵(INTEGER)原樣寫入
+describe('inputs that cannot be read are rejected before any statement and leave the real table unchanged (R19)', function() {
+    let revoked = () => {
+        let r = Proxy.revocable({}, {})
+        r.revoke()
+        return r.proxy
+    }
+    let tagThrow = () => ({
+        get [Symbol.toStringTag]() {
+            throw new Error('tag boom')
+        },
+    })
+    let ownKeysThrow = () => new Proxy({}, {
+        ownKeys() {
+            throw new Error('ownKeys boom')
+        },
+    })
+    let snapshot = async () => jtext(await rows())
+
+    it('should reject an unreadable data container by insert, insertBulk, save and del: one error event with data null, table unchanged', async function() {
+        await reset()
+        let before = await snapshot()
+        for (let entry of ['insert', 'insertBulk', 'save', 'del']) {
+            for (let f of [revoked, tagThrow, ownKeysThrow]) {
+                let wo = mk()
+                let evs = []
+                wo.on('error', (m, d, e) => evs.push([m, d, e]))
+                let s = await settle(wo[entry](f()))
+                assert.ok(s.ok === false && s.e instanceof Error, `${entry}`)
+                assert.strictEqual(s.e.message, 'invalid data: must be a readable value')
+                assert.deepStrictEqual(evs, [[entry, null, 'invalid data: must be a readable value']])
+            }
+        }
+        assert.strictEqual(await snapshot(), before) //S32 資料表不變
+    })
+
+    it('should reject an unreadable option of insert and save, and an unreadable pk of selectByPk', async function() {
+        await reset()
+        let before = await snapshot()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (m, d, e) => evs.push([m, d, e]))
+        let a = await settle(wo.insert({ time: 21, name: 'x' }, revoked()))
+        let b = await settle(wo.save({ time: 22, name: 'x' }, revoked()))
+        let c = await settle(wo.insert({ time: 23, name: 'x' }, { returnList: tagThrow() }))
+        let d = await settle(wo.selectByPk(revoked()))
+        assert.deepStrictEqual([a, b, c, d].map((s) => s.ok === false && s.e.message), [
+            'invalid option: must be a readable value',
+            'invalid option: must be a readable value',
+            'invalid option.returnList: must be a readable value',
+            'invalid pk: must be a readable value',
+        ])
+        assert.deepStrictEqual(evs.map((e) => [e[0], e[1]]), [['insert', null], ['save', null], ['insert', null], ['selectByPk', null]])
+        assert.strictEqual(await snapshot(), before)
+    })
+
+    it('should reject an accessor that throws (option.returnList, option.autoInsert, createTable sample) and a nested unreadable value in the data with the fixed wording, table unchanged (A2, A3)', async function() {
+        await reset()
+        let before = await snapshot()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (m, d, e) => evs.push([m, d, e]))
+        let acc = (prop) => {
+            let o = {}
+            Object.defineProperty(o, prop, {
+                enumerable: true,
+                get() {
+                    throw new Error('SECRET-accessor')
+                },
+            })
+            return o
+        }
+        let rs = []
+        rs.push(await settle(wo.insert({ time: 51, name: 'x' }, acc('returnList'))))
+        rs.push(await settle(wo.save({ time: 52, name: 'x' }, acc('autoInsert'))))
+        rs.push(await settle(wo.insert({ time: 53, name: revoked() })))
+        rs.push(await settle(wo.insertBulk([{ time: 54, name: 'x' }, { time: 55, name: tagThrow() }])))
+        rs.push(await settle(wo.save([{ time: 56, name: 'x' }, acc('name')])))
+        rs.push(await settle(wo.del([{ time: 1 }, { time: revoked() }])))
+        rs.push(await settle(wo.createTable('tnew_a2', 'id', acc('a'))))
+        assert.deepStrictEqual(rs.map((s) => s.ok === false && s.e.message), [
+            'invalid option.returnList: must be a readable value',
+            'invalid option.autoInsert: must be a readable value',
+            'invalid data: must be a readable value',
+            'invalid data: must be a readable value',
+            'invalid data: must be a readable value',
+            'invalid data: must be a readable value',
+            'invalid sample: must be a readable value',
+        ])
+        assert.deepStrictEqual(evs.map((e) => [e[0], e[1]]), [['insert', null], ['save', null], ['insert', null], ['insertBulk', null], ['save', null], ['del', null], ['createTable', null]])
+        assert.ok(evs.every((e) => e[2].indexOf('SECRET') < 0))
+        assert.strictEqual(await snapshot(), before) //資料表不變(含第1筆time=1之del未被執行)
+    })
+
+    it('should keep a readable but invalid input as before: empty result for data, null for selectByPk, no error event', async function() {
+        await reset()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (m, d, e) => evs.push([m, d, e]))
+        assert.deepStrictEqual(await wo.insert(5), { n: 0, nInserted: 0, ok: 1 })
+        assert.deepStrictEqual(await wo.save('abc'), [])
+        assert.deepStrictEqual(await wo.del(null), [])
+        assert.strictEqual(await wo.selectByPk(Object('1')), null)
+        assert.strictEqual(await wo.selectByPk({}), null)
+        assert.deepStrictEqual(evs, [])
+    })
+
+    it('should write an INTEGER primary key given as a number exactly as given, and reject a wrapper object without touching the row', async function() {
+        await reset()
+        let wo = mk()
+        let evs = []
+        wo.on('error', (m) => evs.push(m))
+        let r = await wo.insert({ time: 41, name: 'typed' })
+        assert.strictEqual(r.nInserted, 1)
+        assert.strictEqual((await row(41)).name, 'typed') //S31 型別化主鍵原樣
+        assert.strictEqual((await wo.selectByPk(41)).name, 'typed')
+        let w1 = await settle(wo.insert({ time: Object(42), name: 'wrap' }))
+        let w2 = await settle(wo.save({ time: Object('41'), name: 'changed' }))
+        assert.ok(w1.ok === false && w1.e.message === 'invalid id: unsupported primary key value at [data[0].time]')
+        assert.ok(w2.ok === false && w2.e.message === 'invalid id: unsupported primary key value at [data[0].time]')
+        let dd = await wo.del({ time: Object('41') })
+        assert.deepStrictEqual(dd, [{ n: 0, nDeleted: 0, ok: 0, err: 'invalid id: unsupported primary key value at [data[0].time]' }])
+        assert.strictEqual((await row(41)).name, 'typed') //被拒絕者不改任何列
+        assert.strictEqual(await row(42), undefined)
+        assert.deepStrictEqual(evs, ['insert', 'save', 'del'])
     })
 })

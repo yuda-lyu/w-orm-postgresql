@@ -1,6 +1,6 @@
 {
   "name": "w-orm-postgresql",
-  "version": "1.0.66",
+  "version": "1.0.67",
   "main": "dist/w-orm-postgresql.umd.js",
   "dependencies": {
     "knex": "3.3.0",

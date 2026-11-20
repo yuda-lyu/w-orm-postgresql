@@ -20,6 +20,7 @@ import getDiagSecrets from 'wsemi/src/getDiagSecrets.mjs'
 import pmSeries from 'wsemi/src/pmSeries.mjs'
 import chkOrmStr from 'wsemi/src/chkOrmStr.mjs'
 import chkOrmData from 'wsemi/src/chkOrmData.mjs'
+import chkReadable from 'wsemi/src/chkReadable.mjs'
 import { cvFind, cvOrder, cvKey, isDateValue, dateTimeOf } from './cvFind.mjs'
 import { genInsert, genConflict, cvColumns, quoteKey, isColumnName, cvTable } from './cvWrite.mjs'
 import lowerFindEq from 'wsemi/src/lowerFindEq.mjs'
@@ -49,6 +50,15 @@ let pgBools = Object.create(null)
  * 1. 主鍵值：字串不得含孤立代理字元(UTF-8送出會變為U+FFFD而指到他列)與NUL；insert、insertBulk整批reject(invalid id: <原因> at [data[<k>].<主鍵名>])，save對此類主鍵與資料之違規逐筆回ok:0與err，del逐筆回ok:0與err，selectByPk回傳null。
  * 2. 寫入資料：字串值與鍵名(含巢狀物件、陣列元素)不得含孤立代理字元，insert、insertBulk整批reject(invalid data: <原因> at [data[<k>].<路徑>])，save該筆回ok:0；值之NUL不屬共用檢核(由PostgreSQL自身拒收)，寫入之頂層鍵含NUL者另於連線之前拒收(invalid data key: contains NUL at [data[<k>].<invalid key>])。U+FFFD與成對代理(emoji等)為良構，照常寫入。
  * 3. 建構設定：opt.url、opt.db、opt.cl含孤立代理字元或NUL者建構即throw Error('invalid opt.<名>: <原因>')。
+ * 讀取即拋錯之輸入(R19，探針由wsemi之chkReadable單一擁有)：資料容器(insert、insertBulk、save、del之data，createTable之樣本)、option與option.returnList、selectByPk之主鍵、order、createTable之cl與pk引數、建構之opt與其成員，
+ * 若讀取即拋錯(已撤銷之Proxy、Symbol.toStringTag拋錯、ownKeys等陷阱拋錯、陣列length或[0]拋錯)，判斷函數雖回false，仍依原失敗通道拒絕而不當成[未給]或[空輸入]：
+ * 寫入入口與selectByPk發1次error事件(data引數為null)後reject，不連線、不寫入；建構同步throw；訊息為固定詞彙invalid <名稱>: must be a readable value(不含原例外文字與值)。
+ * 可讀而型別不符者照既有處理(如insert(5)回空結果、opt.url為5用預設)。
+ * 容器可讀而成員為拋錯之存取器(opt.<鍵>、option.returnList與option.autoInsert、createTable樣本之成員與陣列[0]，get陷阱只對該鍵拋錯者同)，與資料內巢狀之不可讀值(複製階段cloneDeep拋錯：id、列之成員、陣列其後之元素、欄位值為已撤銷之Proxy或拋錯之存取器，
+ * 及原型為null之Date、過深之巢狀等無法複製者；複製處不分辨拋出原因)，亦為同一固定詞彙(invalid opt.<鍵>|option.<鍵>|sample|data: must be a readable value)與同一通道(error事件恰一次、data為null後reject，資料庫不變)，不轉出存取器或陷阱拋出之文字。
+ * 選項容器本身不可讀者名稱為容器名(invalid opt|option)。複製之後讀取複本所拋者(如原型上之存取器)不在此列，本套件只讀自有可列舉屬性，原型上之id視為缺主鍵。error事件之data：入口階段(選項與資料之讀取、判定與複製)之拒絕為null，其後之整批拒絕(如invalid id)與逐筆失敗不變。
+ * 例外：opt.logDetail與opt.funLog由wsemi之getDiag處置(診斷出口永不失敗)；find之不可讀由wsemi之cvOrmFind以其固定詞彙處置。
+ * 主鍵恆不補值(本套件無autoGenPk)：未帶或給了而無效者(包裝物件、物件、陣列、Symbol、BigInt、NaN、無效Date等)一律拒絕，number、boolean、真Date為型別化主鍵欄位之有效值並原樣交給驅動(布林於WHERE為IS TRUE/IS FALSE字面值，其餘為綁定參數)。
  * 診斷輸出與遮罩(w-orm系列規則，由wsemi之getDiag單一擁有，本套件只宣告秘密來源與呼叫點，規格見R-DIAG-01)：本套件會寫console之情形有二：change與error事件之訂閱函數拋錯(拋錯被吞下，不影響操作之結果與時機)；操作所用之連線於建立後被後端或網路非同步中斷(label為'client error')。
  * 後者原為未捕捉例外(驅動於連線無進行中語句時發出之'error'事件無人監聽)，使行程終止並把後端錯誤原文印到stderr；現各連線建立即掛監聽，吸收該事件並輸出安全摘要(不含錯誤原文)，不再終止行程，該次操作以既有之失敗通道回報(驅動令進行中與其後之語句reject：整批reject、save預讀reject、del逐筆回ok:0與err)，不新增事件或回傳形狀。
  * 預設只輸出固定標籤與不含個資之摘要(如console.log('change handler threw', { mode: 'insert', errType: 'Error' })、console.log('client error', { mode: 'select', errType: 'DatabaseError', errCode: '57P01' }))，不含資料值、id、使用者識別、後端錯誤原文與連線憑證；
@@ -84,9 +94,34 @@ function WOrmPostgresql(opt = {}) {
         }
     }
 
+    //getOptVal, 取呼叫端給的opt之成員值(R19之S35、S38, 對齊A1、A2): 讀取拋錯者一律轉固定詞彙而不轉出拋出者之原訊息, 皆為建構時同步throw:
+    //opt本身不可讀(已撤銷之Proxy、get陷阱與Symbol.toStringTag拋錯者等, 以chkReadable判定)為invalid opt: must be a readable value;
+    //opt可讀而該成員為存取器且拋錯(chkReadable不呼叫存取器)、或get陷阱只對該鍵拋錯者為invalid opt.<名>: must be a readable value
+    let getOptVal = (name) => {
+        try {
+            return get(opt, name)
+        }
+        catch (err) {
+            if (chkReadable(opt) !== '') {
+                throw new Error('invalid opt: must be a readable value')
+            }
+            throw new Error(`invalid opt.${name}: must be a readable value`)
+        }
+    }
+
+    //chkOptReadable, opt之成員值為呼叫端給的值: 判斷函數(isestr、isbol)回false後以chkReadable分辨「不可讀」與「型別不符」(R19);
+    //不可讀者(已撤銷之Proxy、Symbol.toStringTag拋錯者等)走原失敗通道(建構時同步throw), 訊息為固定詞彙、不含原例外文字, 不被忽略而改用預設;
+    //可讀而型別不符者(含字串包裝物件)仍忽略並用預設(K3, 本套件慣例)
+    let chkOptReadable = (name, v) => {
+        if (chkReadable(v) !== '') {
+            throw new Error(`invalid opt.${name}: must be a readable value`)
+        }
+    }
+
     //url
-    let url = get(opt, 'url')
+    let url = getOptVal('url')
     if (!isestr(url)) {
+        chkOptReadable('url', url)
         url = 'postgresql://user:password@127.0.0.1:5432'
     }
     else {
@@ -94,8 +129,9 @@ function WOrmPostgresql(opt = {}) {
     }
 
     //db
-    let db = get(opt, 'db')
+    let db = getOptVal('db')
     if (!isestr(db)) {
+        chkOptReadable('db', db)
         db = 'worm'
     }
     else {
@@ -103,8 +139,9 @@ function WOrmPostgresql(opt = {}) {
     }
 
     //cl
-    let cl = get(opt, 'cl')
+    let cl = getOptVal('cl')
     if (!isestr(cl)) {
+        chkOptReadable('cl', cl)
         cl = 'test'
     }
     else {
@@ -112,15 +149,17 @@ function WOrmPostgresql(opt = {}) {
     }
 
     //useCache
-    let useCache = get(opt, 'useCache')
+    let useCache = getOptVal('useCache')
     if (!isbol(useCache)) {
+        chkOptReadable('useCache', useCache)
         useCache = false
     }
 
     //pkName, 主鍵欄位名, select以外之五函數皆以此欄位認定主鍵, 預設為time
     //須為識別字(同find之欄名文法): 其後放進ON CONFLICT、RETURNING之處皆以雙引號引用, 不合者建構即失敗(R9, W6)
-    let pkName = get(opt, 'pk')
+    let pkName = getOptVal('pk')
     if (!isestr(pkName)) {
+        chkOptReadable('pk', pkName)
         pkName = 'time'
     }
     else if (!isColumnName(pkName)) {
@@ -232,7 +271,8 @@ function WOrmPostgresql(opt = {}) {
     //checkData, insert與insertBulk寫入前整批檢核(於任何連線與寫入之前一次完成, 失敗屬整批性錯誤, 以最小索引之不合格筆為準)
     function checkData(data) {
         return map(data, function(v, k) {
-            let e = rowErrOf(v, cloneDeep(v), k)
+            //檢核複本亦經cloneInput(複製處單一擁有者): 第1份複本已複製成功者, 第2份於呼叫堆疊較深處複製時仍可能拋錯(過深之巢狀溢位等), 同轉固定詞彙invalid data(對齊A3)
+            let e = rowErrOf(v, cloneInput(v), k)
             if (e !== null) {
                 throw new Error(e.msg)
             }
@@ -305,13 +345,42 @@ function WOrmPostgresql(opt = {}) {
         return e
     }
 
+    //readErrs, mkReadErr, isReadErr: 「呼叫端給的值不可讀」之拒絕(R19之S34、S40, 對齊A4): mkReadErr建立固定詞彙錯誤invalid <名稱>: must be a readable value(不含值與原例外文字;
+    //name為該輸入之名稱: data、option、option.<鍵>、pk、cl、sample)並登錄為自有錯誤與不可讀拒絕; 此類拒絕(入口階段: 選項與資料之讀取、判定與複製)之error事件其data引數一律為null
+    //(不把不可讀之值交給訂閱函數), 由emitError單點判定(isReadErr以WeakSet判定, 不讀錯誤物件之任何屬性), 各入口不須逐點傳null
+    let readErrs = new WeakSet()
+    let mkReadErr = (name) => {
+        let e = ownErr(`invalid ${name}: must be a readable value`)
+        readErrs.add(e)
+        return e
+    }
+    let isReadErr = (err) => {
+        return err !== null && typeof err === 'object' && readErrs.has(err)
+    }
+
+    //textOfValue, 組成obj[<值>] is not an effective object所用之文字: String(v)可能拋錯(原型為null之物件、toString為拋錯之函數等), 此時改用內部標籤,
+    //使可讀而型別不符之樣本照既有訊息拒絕, 不被誤判為不可讀(R19)
+    let textOfValue = (v) => {
+        try {
+            return String(v)
+        }
+        catch (err) {
+            try {
+                return Object.prototype.toString.call(v)
+            }
+            catch (err2) {
+                return 'unknown'
+            }
+        }
+    }
+
     //genSqlForCreateTable, 表名(cvTable)、欄名鍵與主鍵名(isColumnName)先檢核再以雙引號引用(與INSERT、UPDATE、find之引用一致, 不折為小寫),
     //型別為getValueType之固定常數集合, 不含呼叫端字串; 不合者拋Error(訊息不回顯該值), 此時尚未送出任何語句(R9, W4)
     function genSqlForCreateTable(tableName, pk, obj) {
 
         //check, iseobj以for..in判定而含繼承可列舉鍵, 但欄位只取自有鍵(Object.entries), 故另要求至少一個自有鍵(否則建出零欄表)
         if (!iseobj(obj) || Object.keys(obj).length === 0) {
-            throw ownErr(`obj[${obj}] is not an effective object`)
+            throw ownErr(`obj[${textOfValue(obj)}] is not an effective object`)
         }
 
         //table
@@ -396,12 +465,89 @@ function WOrmPostgresql(opt = {}) {
     //正常結果(如查無數據、主鍵未命中、內容相同而未寫入)不得發出, 以免監聽者將常態當異常
     //err為各站點交來之值: 外來值(驅動、後端、使用端程式拋出者)已於接縫(pgClient、pgConnect、pgRun、pgEnd)或站點經diag.err遮除憑證, 本套件自身之固定詞彙錯誤原樣; 本函數不再遮罩
     //(其同時收自身之固定詞彙錯誤, 一律遮罩會把固定字串挖空而讓缺口反推短密碼); data為呼叫端輸入, 屬回傳契約
+    //「呼叫端給的值不可讀」之拒絕(isReadErr: 入口階段之選項與資料之讀取、判定與複製, 及pk、createTable引數與樣本之讀取)其data引數一律為null(不把不可讀之值交給訂閱函數, 對齊A4);
+    //其後之整批拒絕(如invalid id)與逐筆失敗之data不變
     let emitError = (mode, data, err) => {
         try {
-            ee.emit('error', mode, data, getErrMsg(err))
+            ee.emit('error', mode, isReadErr(err) ? null : data, getErrMsg(err))
         }
         catch (errEmit) {
             diag('error handler threw', { mode, ...diag.brief(errEmit) }, () => errEmit)
+        }
+    }
+
+    //rejectIn, 入口階段(option、data之讀取、判定與複製, 及pk之讀取)之整批性錯誤: 依原失敗通道, error事件恰一次後reject, 不連線、不寫入、不重設快取;
+    //error事件之data為null(不把不可讀之值交給訂閱函數, A4); err恆為本套件自身之固定詞彙錯誤(mkReadErr, invalid <名稱>: must be a readable value), 不轉出呼叫端物件拋出之文字, 故不經diag.err
+    let rejectIn = (mode, err) => {
+        emitError(mode, null, err)
+        return Promise.reject(err)
+    }
+
+    //getOpt, 取呼叫端給的option之成員值(R19之S35、S38, 對齊A1、A2): 讀取拋錯者一律轉固定詞彙之本套件錯誤而不轉出拋出者之原訊息:
+    //option本身不可讀(已撤銷之Proxy、get陷阱與Symbol.toStringTag拋錯者等, 以chkReadable判定)為invalid option: must be a readable value;
+    //option可讀而該成員為存取器且拋錯(chkReadable不呼叫存取器)、或get陷阱只對該鍵拋錯者為invalid option.<鍵>: must be a readable value; 由呼叫端之失敗通道處置
+    let getOpt = (option, key, def) => {
+        try {
+            return get(option, key, def)
+        }
+        catch (err) {
+            if (chkReadable(option) !== '') {
+                throw mkReadErr('option')
+            }
+            throw mkReadErr(`option.${key}`)
+        }
+    }
+
+    //getOptBol, 取option之布林成員: 非布林(含未給)依def; 判斷函數(isbol)回false後以chkReadable分辨, 值不可讀者拋固定詞彙之本套件錯誤,
+    //不被判為型別不符而改用預設; 可讀而型別不符者依def(行為不變)
+    let getOptBol = (option, key, def) => {
+        let v = getOpt(option, key, def)
+        if (isbol(v)) {
+            return v
+        }
+        if (chkReadable(v) !== '') {
+            throw mkReadErr(`option.${key}`)
+        }
+        return def
+    }
+
+    //isUnreadableData, data(insert、insertBulk、save、del之資料容器, createTable之樣本)經判斷函數(iseobj、isearr)判為無效後之可讀性探針(R19), 回傳true為不可讀:
+    //已撤銷之Proxy、ownKeys等陷阱拋錯者、Symbol.toStringTag拋錯者、陣列之長度或[0]讀取拋錯者; 探針只置於判斷為無效之後(有效輸入不多讀);
+    //chkReadable不呼叫存取器, isearr所讀之[0]為存取器而拋錯者於此自讀(僅陣列長度為1時)
+    //探針自身之任何拋錯(如Symbol.toStringTag之存取器隨讀取次數才拋錯, chkReadable已回可讀後之再次讀取)亦視為不可讀
+    let isUnreadableData = (data) => {
+        try {
+
+            //標籤、陣列之長度與[0](isearr之讀取)
+            if (chkReadable(data, { elements: 'first' }) !== '') {
+                return true
+            }
+
+            //自有鍵與原型鏈(iseobj之for...in讀取)只於標籤為[object Object]時讀取: 型別陣列、Buffer等非物件者iseobj不列舉其鍵, 此處亦不可列舉其全部索引(誤傳大型二進位資料時之無謂耗用)
+            if (Object.prototype.toString.call(data) === '[object Object]' && chkReadable(data, { ownKeys: true }) !== '') {
+                return true
+            }
+
+            if (Array.isArray(data) && data.length === 1) {
+                data[0] // eslint-disable-line no-unused-expressions
+            }
+            return false
+        }
+        catch (err) {
+            return true
+        }
+    }
+
+    //cloneInput, 複製呼叫端給的資料(與外部使用數據脫勾; R19之S35、S39, 對齊A3): cloneDeep讀取資料內之成員(id、列之成員、陣列之元素、各欄位值)而拋錯者
+    //(已撤銷之Proxy、拋錯之存取器與陷阱等巢狀不可讀值, 及原型為null之Date、過深之巢狀等無法複製者)一律轉固定詞彙invalid data: must be a readable value而不轉出拋出者之原訊息,
+    //與頂層data不可讀同一通道(由站點之try交rejectIn: error事件恰一次、data引數為null後reject, 不連線、不寫入); 複製處不分辨頂層與巢狀、不分辨拋出之原因;
+    //複製之後讀取複本(如原型上之存取器、繼承之存取器)所拋者不在此列(既有之外來錯誤出口, 見帳本R19已知限制)
+    let cloneInput = (data) => {
+        try {
+            return cloneDeep(data)
+        }
+        catch (err) {
+            throw mkReadErr('data')
         }
     }
 
@@ -628,6 +774,7 @@ function WOrmPostgresql(opt = {}) {
      * 表名、主鍵名與數據物件之鍵於送出任何語句之前先檢核：鍵與pk須為識別字，表名須為一般名稱、schema.table或完整雙引號名稱，
      * 不合者以Error('invalid createTable: ...')整批reject(訊息不回顯值；數據物件本身不是有效物件者例外，既有訊息為obj[<該值>] is not an effective object)；表名與欄名一律加雙引號，故區分大小寫
      * (如{userName:1}建出欄userName，與insert、save、select所用之引用一致，不折為小寫)。DDL以extended協定送出，不可堆疊第二語句。
+     * cl、pk引數或數據物件讀取即拋錯(已撤銷之Proxy等，含數據物件之成員為拋錯之存取器、陣列之[0]為拋錯之存取器)者：發1次error事件(data為null)後reject Error('invalid cl|pk|sample: must be a readable value')(不轉出拋出者之文字)，不連線。
      *
      * @memberOf WOrmPostgresql
      * @param {String} cl 輸入資料表名字串
@@ -637,17 +784,26 @@ function WOrmPostgresql(opt = {}) {
      */
     async function createTable(cl, pk, arr) {
 
-        //pk, 未給時採建構時設定之主鍵欄位
-        if (!isestr(pk)) {
-            pk = pkName
-        }
-
         let isErr = false
         let res = null
 
-        //sql, 引數(表名、主鍵名、數據物件之鍵)於連線之前先檢核並組成DDL: 不合者屬整批性錯誤, 不連線、不送出任何語句, reject前發出1次error事件
+        //sql, 引數(表名、主鍵名、數據物件之鍵)於連線之前先檢核並組成DDL: 不合者屬整批性錯誤, 不連線、不送出任何語句, reject前發出1次error事件;
+        //因呼叫端給的值不可讀(R19; mkReadErr)而拒絕者, 其error事件之data為null(不把不可讀之值交給訂閱函數, 由emitError單點處理)
         let sql = null
         try {
+
+            //cl, 呼叫端給的值: 非字串者由cvTable拒絕(invalid table name), 其中不可讀者另以固定詞彙區辨(R19)
+            if (!isestr(cl) && chkReadable(cl) !== '') {
+                throw mkReadErr('cl')
+            }
+
+            //pk, 未給時採建構時設定之主鍵欄位; 呼叫端給的值: isestr回false後以chkReadable分辨「不可讀」與「型別不符」(R19), 可讀而非字串者視為未給
+            if (!isestr(pk)) {
+                if (chkReadable(pk) !== '') {
+                    throw mkReadErr('pk')
+                }
+                pk = pkName
+            }
 
             //obj
             let obj = arr
@@ -655,9 +811,12 @@ function WOrmPostgresql(opt = {}) {
                 obj = obj[0]
             }
 
-            //check
+            //check, 樣本為呼叫端給的值: iseobj回false後以chkReadable分辨(R19)
             if (!iseobj(obj)) {
-                throw ownErr(`obj[${obj}] is not an effective object`)
+                if (isUnreadableData(obj)) {
+                    throw mkReadErr('sample')
+                }
+                throw ownErr(`obj[${textOfValue(obj)}] is not an effective object`)
             }
 
             //sql
@@ -667,8 +826,9 @@ function WOrmPostgresql(opt = {}) {
         }
         catch (err) {
 
-            //本套件自身之固定詞彙錯誤(ownErr)原樣; 其餘為讀取呼叫端樣本物件時其存取器、Proxy陷阱或toString拋出之值(外來值), 遮除憑證
-            let e = ours.has(err) ? err : diag.err(err)
+            //本套件自身之固定詞彙錯誤(ownErr)原樣; 其餘為讀取呼叫端樣本物件時其存取器、Proxy陷阱或toString拋出之值(如陣列之obj[0]、Object.entries讀成員之存取器),
+            //一律轉固定詞彙invalid sample: must be a readable value而不轉出拋出者之原訊息(對齊A2、A3), 與樣本不可讀同一通道: error事件恰一次、data為null(A4, emitError)後reject
+            let e = ours.has(err) ? err : mkReadErr('sample')
             emitError('createTable', arr, e)
             return Promise.reject(e)
         }
@@ -883,6 +1043,7 @@ function WOrmPostgresql(opt = {}) {
      *
      * 主鍵未命中或主鍵值無效(含孤立代理字元或NUL之字串)皆回傳null而不reject，命中之判定基準與insert、save、del內對既有數據之認定一致。
      * 主鍵值之型別與欄位不符時PostgreSQL回報22P02或22007，亦屬主鍵值無效而回傳null。
+     * 主鍵值讀取即拋錯(已撤銷之Proxy、Symbol.toStringTag拋錯等)者不同於[可讀而無效]：發1次error事件(data為null)後reject Error('invalid pk: must be a readable value')，不連線。
      *
      * @memberOf WOrmPostgresql
      * @param {String|Number|Date} pk 輸入主鍵值，即數據之主鍵欄位值
@@ -894,6 +1055,13 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (!checkPk(pk)) {
+
+            //pk為呼叫端給的值: 判為無效後以chkReadable分辨「不可讀」與「可讀而無效」(R19), 不可讀者(已撤銷之Proxy、Symbol.toStringTag拋錯者等)
+            //依寫入入口之失敗通道: error事件恰一次後reject(data為null), 不得與無效主鍵同樣回傳null
+            if (chkReadable(pk) !== '') {
+                return rejectIn('selectByPk', mkReadErr('pk'))
+            }
+
             //未給有效主鍵值視為查無數據, 判定基準與insert、save、del內對主鍵之認定一致
             return null
         }
@@ -1013,6 +1181,8 @@ function WOrmPostgresql(opt = {}) {
      * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名(含巢狀、陣列元素)含孤立代理字元者，於連線之前整批reject且不寫入任何一筆，
      * 訊息為固定詞彙、不回顯值(invalid id: <原因> at [data[<k>].<主鍵名>]、invalid data: <原因> at [data[<k>].<路徑>])，k為最小索引之不合格筆。
      * INSERT為手寫參數化SQL，所有值皆以綁定參數送出，物件值(JSONB欄，含帶type鍵者如GeoJSON)由pg序列化為JSON，不被當成子查詢。
+     * data、option或option.returnList讀取即拋錯(已撤銷之Proxy等，含option.returnList為拋錯之存取器、資料內巢狀之不可讀值於複製階段拋錯)者不被當成空輸入或未給：發1次error事件(data為null)後reject Error('invalid data|option|option.returnList: must be a readable value')(不轉出拋出者之文字)，不連線、不寫入；
+     * 可讀而型別不符者照既有(data回空結果、option.returnList非布林視為false)。
      *
      * option.returnList為true時改回傳與輸入等長且保序之逐筆陣列，令呼叫端得知[是哪幾筆]為新數據，
      * 而非僅知[有幾筆]。各元素之n恆為1、ok恆為1，因insert之任何錯誤皆屬整批性錯誤而reject，
@@ -1030,15 +1200,26 @@ function WOrmPostgresql(opt = {}) {
         let isErr = false
         let res = null
 
-        //returnList
-        let returnList = get(option, 'returnList', false)
-        if (!isbol(returnList)) {
-            returnList = false
+        //returnList, option與option.returnList為呼叫端給的值: option不可讀、option.returnList不可讀者依原失敗通道(error事件恰一次後reject, R19),
+        //可讀而非布林者視為未給(false)
+        let returnList = false
+        try {
+            returnList = getOptBol(option, 'returnList', false)
+        }
+        catch (err) {
+            return rejectIn('insert', err)
         }
 
         //check
         //輸入無效時, returnList為true者回傳空陣列以對齊save與del之規定
         if (!iseobj(data) && !isearr(data)) {
+
+            //data為呼叫端給的值: 判為無效後以chkReadable分辨「不可讀」與「型別不符」(R19), 不可讀者(已撤銷之Proxy、陷阱拋錯者等)不得靜默回成功形狀,
+            //依原失敗通道(error事件恰一次後reject, 不連線、不寫入); 可讀而型別不符者照既有(輸入無效之通道)
+            if (isUnreadableData(data)) {
+                return rejectIn('insert', mkReadErr('data'))
+            }
+
             if (returnList) {
                 return []
             }
@@ -1049,16 +1230,13 @@ function WOrmPostgresql(opt = {}) {
             }
         }
 
-        //cloneDeep, 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯屬整批性錯誤, 須發error事件後reject
+        //cloneInput(cloneDeep), 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯(巢狀不可讀值)屬整批性錯誤, 轉固定詞彙invalid data: must be a readable value,
+        //依原失敗通道(error事件恰一次、data為null後reject, 不連線、不寫入)
         try {
-            data = cloneDeep(data)
+            data = cloneInput(data)
         }
         catch (err) {
-
-            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
-            let e = diag.err(err)
-            emitError('insert', null, e)
-            return Promise.reject(e)
+            return rejectIn('insert', err)
         }
 
         //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
@@ -1165,6 +1343,7 @@ function WOrmPostgresql(opt = {}) {
      * 因主鍵得承載業務語義，未帶有效主鍵值時不自動補值，一律以reject回報，
      * 且主鍵檢查於任何寫入之前一次完成，故整批reject時同批之有效筆數亦不會被寫入。
      * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名含孤立代理字元者，同樣於連線之前整批reject(訊息格式同insert)。
+     * data讀取即拋錯(已撤銷之Proxy等，含資料內巢狀之不可讀值於複製階段拋錯)者不被當成空輸入：發1次error事件(data為null)後reject Error('invalid data: must be a readable value')(不轉出拋出者之文字)，不連線、不寫入。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -1176,6 +1355,12 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (!iseobj(data) && !isearr(data)) {
+
+            //data不可讀者依原失敗通道(R19), 可讀而型別不符者照既有(輸入無效之通道)
+            if (isUnreadableData(data)) {
+                return rejectIn('insertBulk', mkReadErr('data'))
+            }
+
             return {
                 n: 0,
                 nInserted: 0,
@@ -1183,16 +1368,13 @@ function WOrmPostgresql(opt = {}) {
             }
         }
 
-        //cloneDeep, 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯屬整批性錯誤, 須發error事件後reject
+        //cloneInput(cloneDeep), 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯(巢狀不可讀值)屬整批性錯誤, 轉固定詞彙invalid data: must be a readable value,
+        //依原失敗通道(error事件恰一次、data為null後reject, 不連線、不寫入)
         try {
-            data = cloneDeep(data)
+            data = cloneInput(data)
         }
         catch (err) {
-
-            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
-            let e = diag.err(err)
-            emitError('insertBulk', null, e)
-            return Promise.reject(e)
+            return rejectIn('insertBulk', err)
         }
 
         //check data, 於連線之前對複本檢核(R17): 因主鍵得承載業務語義故不自動補值, 未帶有效主鍵值(含孤立代理字元或NUL之字串)
@@ -1298,6 +1480,7 @@ function WOrmPostgresql(opt = {}) {
      * 主鍵字串含孤立代理字元或NUL，或資料之字串值與鍵名(含巢狀、陣列元素)含孤立代理字元、寫入之頂層鍵含NUL者，於連線之前檢出，
      * 該筆回ok:0(n為1、nInserted與nModified為0，沿用save逐筆失敗之既有形狀)與err(invalid id|data: <原因> at [data[<k>]...]，固定詞彙、不回顯值)且不送查詢，
      * 同批其他筆照常，每筆失敗發1次error事件。
+     * data或option讀取即拋錯(已撤銷之Proxy等，含option.autoInsert為拋錯之存取器、資料內巢狀之不可讀值於複製階段拋錯)者不被當成空輸入或未給：發1次error事件(data為null)後reject Error('invalid data|option|option.autoInsert: must be a readable value')(不轉出拋出者之文字)，不連線、不寫入。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -1311,23 +1494,33 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (!iseobj(data) && !isearr(data)) {
+
+            //data不可讀者依原失敗通道(R19), 可讀而型別不符者照既有(輸入無效之通道)
+            if (isUnreadableData(data)) {
+                return rejectIn('save', mkReadErr('data'))
+            }
+
             return []
         }
 
-        //cloneDeep, 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯屬整批性錯誤, 須發error事件後reject
+        //cloneInput(cloneDeep), 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯(巢狀不可讀值)屬整批性錯誤, 轉固定詞彙invalid data: must be a readable value,
+        //依原失敗通道(error事件恰一次、data為null後reject, 不連線、不寫入)
         try {
-            data = cloneDeep(data)
+            data = cloneInput(data)
         }
         catch (err) {
-
-            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
-            let e = diag.err(err)
-            emitError('save', null, e)
-            return Promise.reject(e)
+            return rejectIn('save', err)
         }
 
-        //autoInsert
-        let autoInsert = get(option, 'autoInsert', true)
+        //autoInsert, option為呼叫端給的值: option不可讀者(已撤銷之Proxy等)、option.autoInsert為存取器而拋錯者皆轉固定詞彙(invalid option|option.autoInsert: must be a readable value),
+        //依原失敗通道(error事件恰一次、data為null後reject, R19); autoInsert之值本身不經判斷函數(僅真假值), 不另探針
+        let autoInsert = true
+        try {
+            autoInsert = getOpt(option, 'autoInsert', true)
+        }
+        catch (err) {
+            return rejectIn('save', err)
+        }
 
         //check data, 於連線之前對複本檢核(R17): 主鍵含孤立代理字元或NUL之字串, 或資料含孤立代理字元者, 該筆回ok:0與err(固定詞彙, 不回顯值)且不送查詢,
         //同批其他筆照常; 未帶有效主鍵(未給、型別不符)屬T6之整批性錯誤, 未開啟autoInsert時有效筆之資料鍵須為識別字, 不合者亦為整批性錯誤,
@@ -1342,7 +1535,7 @@ function WOrmPostgresql(opt = {}) {
             pks = []
             for (let k = 0; k < data.length; k++) {
                 let v = data[k]
-                let c = cloneDeep(v)
+                let c = cloneInput(v) //同checkData: 檢核複本經cloneInput, 拋錯者轉固定詞彙invalid data(對齊A3)
                 let e = rowErrOf(v, c, k, !autoInsert)
                 if (e !== null && !e.perRow) {
                     throw new Error(e.msg)
@@ -1739,6 +1932,7 @@ function WOrmPostgresql(opt = {}) {
      * 判斷某筆是否真的被刪除一律以nDeleted為準。
      * 未帶有效主鍵值(含主鍵字串含孤立代理字元或NUL)者為該筆之輸入問題，回ok:0與err(invalid id: <原因> at [data[<k>].<主鍵名>]，固定詞彙、不回顯值)且不送查詢，不中斷其餘筆數，
      * 以此與[主鍵未命中]之ok:1區辨。
+     * data讀取即拋錯(已撤銷之Proxy等，含資料內巢狀之不可讀值於複製階段拋錯)者不被當成空輸入：發1次error事件(data為null)後reject Error('invalid data: must be a readable value')(不轉出拋出者之文字)，不連線、不送任何查詢。
      *
      * @memberOf WOrmPostgresql
      * @param {Object|Array} data 輸入數據物件或陣列
@@ -1750,19 +1944,22 @@ function WOrmPostgresql(opt = {}) {
 
         //check
         if (!iseobj(data) && !isearr(data)) {
+
+            //data不可讀者依原失敗通道(R19), 可讀而型別不符者照既有(輸入無效之通道)
+            if (isUnreadableData(data)) {
+                return rejectIn('del', mkReadErr('data'))
+            }
+
             return []
         }
 
-        //cloneDeep, 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯屬整批性錯誤, 須發error事件後reject
+        //cloneInput(cloneDeep), 與外部使用數據脫勾; 呼叫端物件之getter/Proxy拋錯(巢狀不可讀值)屬整批性錯誤, 轉固定詞彙invalid data: must be a readable value,
+        //依原失敗通道(error事件恰一次、data為null後reject, 不連線、不送任何查詢)
         try {
-            data = cloneDeep(data)
+            data = cloneInput(data)
         }
         catch (err) {
-
-            //使用端物件之存取器或Proxy陷阱拋出之值為外來值, 遮除憑證後才交給事件與reject
-            let e = diag.err(err)
-            emitError('del', null, e)
-            return Promise.reject(e)
+            return rejectIn('del', err)
         }
 
         //check pk, 於連線之前對複本檢核(R17): 逐筆處置, 主鍵無效(缺主鍵、含孤立代理字元或NUL之字串等)者該筆回ok:0與err(固定詞彙, 不回顯值)且不送查詢,

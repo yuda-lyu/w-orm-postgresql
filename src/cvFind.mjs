@@ -3,6 +3,7 @@
 //  order: 本模組自行檢核(order不屬系列find白名單, 但鍵與find同文法: 僅識別字), 輸出為有序陣列[{c, dir, nulls}]
 import cvOrmFind from 'wsemi/src/cvOrmFind.mjs'
 import lowerFind from 'wsemi/src/lowerFind.mjs'
+import chkReadable from 'wsemi/src/chkReadable.mjs'
 import { dialectPg } from './buildSql.mjs'
 
 
@@ -114,23 +115,13 @@ let chkKey = (k, path) => {
     return k
 }
 
+//readOwn, 讀取order之自有鍵與其描述子; 讀取拋錯者(陷阱拋錯之Proxy; 含只對symbol鍵拋錯者, 其不在chkReadable之字串鍵探針內)不在此包裝,
+//由cvOrder之catch統一轉invalid order: must be a readable value, 不內嵌拋出者之文字(R19, 對齊A2)
 let readOwn = (obj, path) => {
     let out = []
-    let keys
-    try {
-        keys = Reflect.ownKeys(obj)
-    }
-    catch (err) {
-        fail(`can not read keys: ${err.message}`, path)
-    }
+    let keys = Reflect.ownKeys(obj)
     for (let k of keys) {
-        let d
-        try {
-            d = Object.getOwnPropertyDescriptor(obj, k)
-        }
-        catch (err) {
-            fail(`can not read property [${clean(String(k), 30)}]: ${err.message}`, path)
-        }
+        let d = Object.getOwnPropertyDescriptor(obj, k)
         if (typeof k === 'symbol') {
             fail('symbol key is not allowed', path)
         }
@@ -169,6 +160,22 @@ export function cvFind(find) {
     }
 }
 
+//isUnreadableOrder, order為呼叫端給的值, 檢核失敗後之可讀性探針(R19; 探針置於檢核失敗之後, 有效輸入不多讀):
+//已撤銷之Proxy、Symbol.toStringTag拋錯者、ownKeys等陷阱拋錯者為不可讀; 自有鍵與原型鏈只於標籤為[object Object]時探(同isUnreadableData);
+//chkReadable不呼叫存取器, 屬性為存取器者仍走既有之accessor property is not allowed
+//探針自身之任何拋錯(如Symbol.toStringTag之存取器隨讀取次數才拋錯)亦視為不可讀
+let isUnreadableOrder = (order) => {
+    try {
+        if (chkReadable(order) !== '') {
+            return true
+        }
+        return tag(order) === '[object Object]' && chkReadable(order, { ownKeys: true }) !== ''
+    }
+    catch (err) {
+        return true
+    }
+}
+
 /**
  * 檢核並正規化order, 回傳有序陣列[{c, dir, nulls}]
  *
@@ -201,10 +208,18 @@ export function cvOrder(order) {
         return out
     }
     catch (err) {
+
+        //order不可讀者(讀取即拋錯)為固定詞彙, 不帶原例外文字(R19); 可讀而型別或內容不符者照既有
+        if (isUnreadableOrder(order)) {
+            throw new Error('invalid order: must be a readable value')
+        }
         if (ours.has(err)) {
             throw new Error(err.message.replace(/^invalid find/, 'invalid order'))
         }
-        throw new Error(`invalid order: ${clean(msgOf(err), 200)} at [order]`)
+
+        //其餘非本模組之錯誤皆為讀取呼叫端order時拋出者(readOwn之自有鍵與描述子讀取, 含只對symbol鍵拋錯者; getPrototypeOf陷阱只於第1次讀取拋錯而判斷與探針已不再拋者):
+        //轉固定詞彙, 不轉出拋出者之文字(對齊A2)
+        throw new Error('invalid order: must be a readable value')
     }
 }
 

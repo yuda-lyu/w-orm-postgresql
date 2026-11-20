@@ -570,7 +570,7 @@ describe('單一出口與站點盤點(R18-7、R-DIAG-01)', function() {
         }
     })
 
-    it('R-DIAG-01 驅動呼叫之單一接縫: new PgClient、client.connect、client.query、client.end各恰1處(pgClient、pgConnect、pgRun、pgEnd內); diag.err恰9處(接縫4、cloneDeep之catch 4、createTable讀樣本1), 無diag.mask(逐筆err與事件之訊息皆源自接縫)', function() {
+    it('R-DIAG-01 驅動呼叫之單一接縫: new PgClient、client.connect、client.query、client.end各恰1處(pgClient、pgConnect、pgRun、pgEnd內); diag.err恰4處(皆為接縫; 呼叫端物件之存取器與Proxy陷阱拋出者[複製階段、option與樣本之讀取]一律轉固定詞彙而不轉出原文字[R19, A2、A3], 不再經diag.err), 無diag.mask(逐筆err與事件之訊息皆源自接縫)', function() {
         assert.strictEqual(count(/new PgClient\(/), 1)
         assert.strictEqual(count(/\bclient\.connect\(/), 1)
         assert.strictEqual(count(/\bclient\.query\(/), 1)
@@ -584,19 +584,19 @@ describe('單一出口與站點盤點(R18-7、R-DIAG-01)', function() {
             assert.ok(a >= 0 && b > a && b - a <= 4, `${fn}之驅動呼叫應緊接於函數開頭`)
             assert.ok(/diag\.err\(err\)/.test(lines.slice(b, b + 5).join('\n')), `${fn}之catch須經diag.err`)
         }
-        assert.strictEqual(count(/\bdiag\.err\(/), 9)
+        assert.strictEqual(count(/\bdiag\.err\(/), 4)
         assert.strictEqual(count(/\bdiag\.mask\(/), 0)
     })
 
-    it('R-DIAG-01 reject站點盤點: Promise.reject恰28處(createTable 3、select 4、selectByPk 2、insert 4、insertBulk 4、save 4、del 3、delAll 4); 新增者須先判定外來值或固定詞彙並補規則帳本站點表', function() {
-        assert.strictEqual(count(/\bPromise\.reject\(/), 28)
+    it('R-DIAG-01 reject站點盤點: Promise.reject恰25處(createTable 3、select 4、selectByPk 2、insert 3、insertBulk 3、save 3、del 2、delAll 4,另入口階段共用之rejectIn 1[R19]; 各入口之複製階段改走rejectIn); 新增者須先判定外來值或固定詞彙並補規則帳本站點表', function() {
+        assert.strictEqual(count(/\bPromise\.reject\(/), 25)
         //各操作之Promise.reject數(以function宣告區段分段)
         let lines = mainCode()
         let names = ['createTable', 'select', 'selectByPk', 'insert', 'insertBulk', 'save', 'del', 'delAll']
         let starts = names.map((n) => lines.findIndex((l) => new RegExp(`^\\s*async function ${n}\\(`).test(l)))
         assert.ok(starts.every((s) => s >= 0), starts.join())
         let got = names.map((n, i) => lines.slice(starts[i], i + 1 < names.length ? starts[i + 1] : lines.length).filter((l) => /\bPromise\.reject\(/.test(l)).length)
-        assert.deepStrictEqual(got, [3, 4, 2, 4, 4, 4, 3, 4])
+        assert.deepStrictEqual(got, [3, 4, 2, 3, 3, 3, 2, 4])
     })
 
 })
